@@ -166,7 +166,6 @@ static const uint32_t freq_to_phase_q32[NUM_SR] = {
 };
 static const uint8_t dc_shift[3] = { 5, 4, 2 }; /* 8 kHz, 16 kHz, 48 kHz */
 static const uint16_t sr_sqrt_scale[3] = { 724, 512, 295 };
-FLASH_CONST static const int32_t *hilbert_q15_per_sr_alias[NUM_SR] = { hilbert_q15_per_sr[0], hilbert_q15_per_sr[1], hilbert_q15_per_sr[1] /* 48 kHz points to 16 kHz table */
-};
+FLASH_CONST static const int32_t *hilbert_q15_per_sr_alias[NUM_SR] = { hilbert_q15_per_sr[0], hilbert_q15_per_sr[1], hilbert_q15_per_sr[1] }; /* 48 kHz points to 16 kHz table */
 
 #endif /* TABLES_H_ */

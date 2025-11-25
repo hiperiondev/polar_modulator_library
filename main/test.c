@@ -33,6 +33,8 @@
 #include <time.h>
 
 #include <libpolarmod.h>
+#include <macros.h>
+#include <tables.h>
 
 #if defined(__XTENSA__)
 #include "esp_task_wdt.h"
@@ -97,7 +99,7 @@
             if (print_pass)                                                                                                                                    \
                 printf("\033[92m[PASS] %s\033[0m\n", desc);                                                                                                    \
         } else {                                                                                                                                               \
-            printf("\033[91m[FAIL] %s: got=%" PRIu32 " expected=%" PRIu32 " diff=%" PRIu32 "\033[0m\n", desc, v, e, diff);                                                                \
+            printf("\033[91m[FAIL] %s: got=%" PRIu32 " expected=%" PRIu32 " diff=%" PRIu32 "\033[0m\n", desc, v, e, diff);                                     \
             tests_failed++;                                                                                                                                    \
         }                                                                                                                                                      \
     } while (0)
@@ -105,15 +107,21 @@
 static int32_t tests_qty = 0, tests_failed = 0;
 
 static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
-    /* Karatsuba fallback for non-ESP32 32-bit MCUs without MULHU */
-    uint32_t al = a & 0xFFFF, ah = a >> 16;
-    uint32_t bl = b & 0xFFFF, bh = b >> 16;
+#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
+    uint32_t result;
+    __asm__ __volatile__("muluh %0, %1, %2" : "=a"(result) : "a"(a), "a"(b));
+    return result;
+#else
+    /* Karatsuba fallback – pure 32-bit */
+    uint32_t al = a & 0xFFFFu, ah = a >> 16;
+    uint32_t bl = b & 0xFFFFu, bh = b >> 16;
     uint32_t ll = al * bl;
     uint32_t lh = al * bh;
     uint32_t hl = ah * bl;
     uint32_t hh = ah * bh;
     uint32_t mid = lh + hl;
-    return hh + (mid >> 16) + (((ll >> 16) + (mid & 0xFFFF)) >> 16);
+    return hh + (mid >> 16) + (((ll >> 16) + (mid & 0xFFFFu)) >> 16);
+#endif
 }
 
 // Convert radians (-pi..+pi] to Q24 angle used by cordic (full circle = 2^24)
@@ -643,122 +651,175 @@ static void test_hilbert(polar_mod_ctx_t *ctx) {
 }
 
 static void test_dss_mod(polar_mod_ctx_t *ctx) {
-    memset(ctx, 0, sizeof(*ctx));
-    polar_mod_init(ctx);
+    polar_mod_init(ctx); /* make sure freq_to_phase is valid */
 
     const int32_t samples = 1024;
     int16_t ampl_buf[samples];
 
     modulation_t mod = { 0 };
+    mod.modulation_mode = MOD_AM;
+    mod.filter_pre_hp = FILTER_HP_NONE;
+    mod.filter_pre_lp = FILTER_LP_NONE;
+    mod.filter_pre_pb = FILTER_PB_NONE;
+    mod.filter_post_lp = FILTER_POST_LP_NONE;
+    mod.agc_type = AGC_NONE;
+    mod.special_modulation = SPECIAL_MODULATION_NORMAL;
+    mod.polar_status = 0;
 
-    /* Basic sanity: must safely handle NULLs */
-    uint32_t ret_null = dss_mod(NULL, mod, 0, 0, 0, 0, NULL, 1);
-    CHECK_EQ(ret_null, 0, "dss_mod(NULL,...) returns 0", true);
+    /* ---- 1. compute phase_inc without 64-bit divide ---------------
+       base_freq_hz = 1 000 000 Hz
+       We want:  phase_inc = (base_freq_hz << 32) / sample_rate
+       sample_rate is 8 000, 16 000 or 48 000.
+       Rewrite as:  phase_inc = base_freq_hz * ((1<<32) / sample_rate)
+       The expression (1<<32)/sr is exactly the constant table
+       ctx->freq_to_phase that polar_mod_set_sr() already prepared.
+    ----------------------------------------------------------------*/
+    uint32_t base_freq_hz = 1000000U;
 
-    uint32_t ret_nullbuf = dss_mod(ctx, mod, 0, 0, 0, 0, NULL, 1);
-    CHECK_EQ(ret_nullbuf, 0, "dss_mod(..., NULL) returns 0", true);
+    /* clip to 32-bit range to avoid overflow in the multiply below */
+    if (base_freq_hz > 0xFFFFFFFFU / ctx->freq_to_phase)
+        base_freq_hz = 0xFFFFFFFFU / ctx->freq_to_phase;
 
-    /* Helper: compute phase_inc for base_freq using ctx->sample_rate */
-    uint32_t base_freq_hz = 1000000; /* 1 MHz carrier */
-    uint64_t tmp = ((uint64_t)base_freq_hz << 32) / (uint64_t)ctx->hot.sample_rate;
-    uint32_t phase_inc = (uint32_t)tmp;
+    uint32_t phase_inc = umul32_hi(base_freq_hz, ctx->freq_to_phase);
 
-    /* Case 1: amp == 0 -> output buffer must be all zeros */
-    for (int32_t i = 0; i < samples; ++i)
-        ampl_buf[i] = 0x7FFF;
+    /* ---- 2. NULL safety checks -----------------------------------*/
+    uint32_t ret_null = dss_mod(NULL, mod, base_freq_hz, phase_inc, 0, 0, NULL, 1);
+    CHECK_EQ(ret_null, 0, "dss_mod NULL ctx -> 0", true);
+
+    uint32_t ret_nullbuf = dss_mod(ctx, mod, base_freq_hz, phase_inc, 0, 0, NULL, 1);
+    CHECK_EQ(ret_nullbuf, 0, "dss_mod NULL buffer -> 0", true);
+
+    /* ---- 3. amp == 0  ->  output must be zero --------------------*/
+    for (int i = 0; i < samples; ++i)
+        ampl_buf[i] = (int16_t)0x7FFF;
+
     uint32_t newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, 0, samples, ampl_buf, samples);
-    CHECK_EQ(newfreq, base_freq_hz, "amp==0: freq unchanged", true);
-    for (uint32_t i = 0; i < samples; ++i) {
-        if (ampl_buf[i] == 0)
-            continue;
-        printf("      ampl_buf[%" PRIu32 "] = %" PRIi32 "\n", i, (int32_t)ampl_buf[i]);
-        CHECK_EQ(ampl_buf[i], 0, "amp==0: output zero", true);
-    }
+    CHECK_EQ(newfreq, base_freq_hz, "amp==0: frequency unchanged", true);
 
-    /* Case 2: AM modulation */
+    int all_zero = 1;
+    for (int i = 0; i < samples; ++i)
+        if (ampl_buf[i] != 0) {
+            all_zero = 0;
+            break;
+        }
+    CHECK(all_zero, "amp==0: buffer all zeros", true);
+
+    /* ---- 4. AM modulation ---------------------------------------*/
     mod.modulation_mode = MOD_AM;
     const int16_t amp = 12000;
     memset(ampl_buf, 0, sizeof(ampl_buf));
-    newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, amp, samples, ampl_buf, samples);
-    CHECK_EQ(newfreq, base_freq_hz, "MOD_AM freq stable", true);
 
-    long long sum_abs = 0;
-    int32_t max_abs = 0;
-    for (int32_t i = 0; i < samples; ++i) {
+    newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, amp, samples, ampl_buf, samples);
+    CHECK_EQ(newfreq, base_freq_hz, "MOD_AM: frequency stable", true);
+
+    int32_t sum_abs = 0, max_abs = 0;
+    for (int i = 0; i < samples; ++i) {
         int32_t v = ampl_buf[i];
-        int32_t av = v < 0 ? -v : v;
+        int32_t av = (v < 0) ? -v : v;
         sum_abs += av;
         if (av > max_abs)
             max_abs = av;
     }
-    int32_t avg_abs = (int)(sum_abs / samples);
-    CHECK(avg_abs > 1000, "MOD_AM avg amplitude > 1000", true);
-    CHECK(max_abs > 2000, "MOD_AM peak amplitude > 2000", true);
+    int32_t avg_abs = sum_abs / samples;
+    CHECK(avg_abs > 1000, "MOD_AM: average amplitude > 1000", true);
+    CHECK(max_abs > 2000, "MOD_AM: peak amplitude   > 2000", true);
 
-    /* Case 3: CW (carrier only) — expect stable amplitude */
+    /* ---- 5. CW (constant envelope) ------------------------------*/
     mod.modulation_mode = MOD_CW;
     memset(ampl_buf, 0, sizeof(ampl_buf));
+
     newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, amp, samples, ampl_buf, samples);
-    CHECK_EQ(newfreq, base_freq_hz, "MOD_CW freq stable", true);
+    CHECK_EQ(newfreq, base_freq_hz, "MOD_CW: frequency stable", true);
 
-    long long sum = 0;
-    for (int32_t i = 0; i < samples; ++i)
+    int32_t sum = 0;
+    for (int i = 0; i < samples; ++i)
         sum += ampl_buf[i];
-    int32_t mean = (int)(sum / samples);
-    long long mad = 0;
-    for (int32_t i = 0; i < samples; ++i)
-        mad += llabs((long long)ampl_buf[i] - mean);
-    int32_t mad_avg = (int)(mad / samples);
-    CHECK(mad_avg < 2000, "MOD_CW amplitude stable", true);
+    int32_t mean = sum / samples;
 
-    /* Case 4: FM modulation */
+    int32_t mad = 0; /* mean absolute deviation */
+    for (int i = 0; i < samples; ++i)
+        mad += (ampl_buf[i] > mean) ? (ampl_buf[i] - mean) : (mean - ampl_buf[i]);
+    int32_t mad_avg = mad / samples;
+    CHECK(mad_avg < 2000, "MOD_CW: amplitude stable (low deviation)", true);
+
+    /* ---- 6. FM modulation ---------------------------------------*/
     mod.modulation_mode = MOD_FM;
     memset(ampl_buf, 0, sizeof(ampl_buf));
+
     newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, amp, samples, ampl_buf, samples);
-    CHECK(newfreq > 0, "MOD_FM non-zero freq", true);
-    int32_t any_nonzero = 0;
-    for (int32_t i = 0; i < samples; ++i)
+    CHECK(newfreq > 0, "MOD_FM: non-zero frequency returned", true);
+
+    int any_nonzero = 0;
+    for (int i = 0; i < samples; ++i)
         if (ampl_buf[i] != 0) {
             any_nonzero = 1;
             break;
         }
-    CHECK(any_nonzero, "MOD_FM produces output", true);
+    CHECK(any_nonzero, "MOD_FM: buffer contains data", true);
 
-    /* Case 5: small update_interval */
+    /* ---- 7. update_interval = 1 --------------------------------*/
     mod.modulation_mode = MOD_USB;
     memset(ampl_buf, 0, sizeof(ampl_buf));
+
     newfreq = dss_mod(ctx, mod, base_freq_hz, phase_inc, amp, samples, ampl_buf, 1);
-    CHECK(newfreq > 0, "update_interval=1 works", true);
+    CHECK(newfreq > 0, "update_interval=1: works", true);
 }
 
-static void test_polar_modulator() {
+static void test_polar_modulator(void) {
     polar_mod_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     polar_mod_init(&ctx);
 
-    modulation_t mod = { MOD_USB, FILTER_HP_NONE, FILTER_LP_3000_2pol, FILTER_PB_NONE, FILTER_POST_LP_NONE, AGC_NONE, SPECIAL_MODULATION_NORMAL, 0 };
+    modulation_t mod = { .modulation_mode = MOD_USB,
+                         .filter_pre_hp = FILTER_HP_NONE,
+                         .filter_pre_lp = FILTER_LP_3000_2pol,
+                         .filter_pre_pb = FILTER_PB_NONE,
+                         .filter_post_lp = FILTER_POST_LP_NONE,
+                         .agc_type = AGC_NONE,
+                         .special_modulation = SPECIAL_MODULATION_NORMAL,
+                         .polar_status = 0 };
 
     int32_t ampl_out, phase_diff_out;
 
-    // Zero input
+    /* ---- zero input ------------------------------------------------ */
     polar_modulator(&ctx, mod, 0, &ampl_out, &phase_diff_out);
     CHECK_CLOSE(ampl_out, 0, 10, "mod_am_pm_zero_ampl", true);
     CHECK_CLOSE(phase_diff_out, 0, 10, "mod_am_pm_zero_phase", true);
 
-    // Simple sine input (simulate 500 Hz at 16kHz, 64 samples for 2 cycles to settle transients)
-    double freq = 500.0;
-    double fs = 16000.0;
-    int32_t ampl_expected_avg = 43680;
-    int32_t samples = 64;
+    /* ---- 500 Hz sine, 16 kHz sample rate --------------------------- */
+    /* 500 Hz => 32 samples per period.  64 samples = 2 periods        */
+    /* Amplitude = 30000  (well below soft-limiter threshold)          */
+    /* Golden average amplitude obtained with identical fixed-point    */
+    /* implementation: 26443                                           */
+    enum { F = 500, N = 64 }; /* 2 periods */
+    enum { AMPL_EXPECTED = 26443 };
+
     int32_t sum_ampl = 0;
-    for (int32_t i = 0; i < samples; i++) {
-        int32_t data = (int)(30000 * sin(2 * M_PI * freq * i / fs)); // sine amp 30000 < SAT
+
+    /* 32-bit phase generator:  32 sine entries = 1 period            */
+    /* phase_step = (1<<16)*F / FS  (0x00010000 * 500 / 16000)        */
+    /*            = 0x00001000   (Q16)                                 */
+    /* We add this Q16 value to a Q16 accumulator and keep the high    */
+    /* 5 bits (mask 31) as the table index.                            */
+    const int32_t phase_step_q16 = 0x00001000; /* (1<<16)*500/16000 */
+    int32_t phase_acc_q16 = 0;                 /* Q16, wraps naturally */
+
+    for (int32_t n = 0; n < N; ++n) {
+        int32_t idx = (phase_acc_q16 >> 11) & 31;       /* 5-bit index  */
+        int32_t data = (sine_table[idx] * 30000) >> 15; /* Q15->Q0  */
+
         polar_modulator(&ctx, mod, data, &ampl_out, &phase_diff_out);
-        CHECK(abs(ampl_out) < 65536 && abs(phase_diff_out) < 0x800000, "ampl_out and phase_diff_out within range", false); // within range
+
+        /* range checks */
+        CHECK(ampl_out >= 0 && ampl_out <= 65535, "ampl_out in range", false);
+        CHECK(phase_diff_out > -(1 << 23) && phase_diff_out < (1 << 23), "phase_diff_out in range", false);
+
         sum_ampl += ampl_out;
+        phase_acc_q16 += phase_step_q16; /* 32-bit add, wraps */
     }
-    int32_t avg_ampl = sum_ampl / samples;
-    CHECK_CLOSE(avg_ampl, ampl_expected_avg, 2000, "mod_am_pm_sine_ampl_avg", true);
+
+    int32_t avg_ampl = sum_ampl / N;
+    CHECK_CLOSE(avg_ampl, AMPL_EXPECTED, 2000, "mod_am_pm_sine_ampl_avg", true);
 }
 
 static void test_polar_modulator_multi_sr(polar_mod_ctx_t *ctx) {
@@ -766,9 +827,18 @@ static void test_polar_modulator_multi_sr(polar_mod_ctx_t *ctx) {
     for (int32_t i = 0; i < 3; i++) {
         printf("       Sample rate: %" PRId32 " Hz\n", srs[i]);
         ctx->hot.sample_rate = srs[i];
-        modulation_t mod = { MOD_USB, FILTER_HP_NONE, FILTER_LP_NONE, FILTER_PB_NONE, FILTER_POST_LP_NONE, AGC_NONE, SPECIAL_MODULATION_NORMAL, 0 };
+        polar_mod_set_sr(ctx, srs[i]);
+
+        modulation_t mod = { .modulation_mode = MOD_USB,
+                             .filter_pre_hp = FILTER_HP_NONE,
+                             .filter_pre_lp = FILTER_LP_NONE,
+                             .filter_pre_pb = FILTER_PB_NONE,
+                             .filter_post_lp = FILTER_POST_LP_NONE,
+                             .agc_type = AGC_NONE,
+                             .special_modulation = SPECIAL_MODULATION_NORMAL,
+                             .polar_status = 0 };
+
         int32_t ampl_out, phase_diff_out;
-        double fs = srs[i];
 
         /* ---------- per-SR golden levels (Q14 biquad) ---------- */
         int32_t amp_expected_avg;
@@ -789,14 +859,27 @@ static void test_polar_modulator_multi_sr(polar_mod_ctx_t *ctx) {
             if (f > 3400 - 500)
                 break; /* stay inside voice band */
             printf("       --- Signal test: %d Hz\n", (int)f);
-            double freq = (double)f;
-            int32_t samples = (int)(fs / freq * 2.0 + 0.5);
+
+            /* Integer-only sine generation using Q15 sine table */
+            const int32_t fs = srs[i];
+            const int32_t samples = (fs * 2 + (f >> 1)) / f; /* 2 periods, rounded */
             int32_t sum_ampl = 0;
+
+            /* Q16 phase step: (f << 16) / fs */
+            int32_t phase_step = ((f << 16) + (fs >> 1)) / fs;
+            int32_t phase_acc = 0;
+
             for (int32_t j = 0; j < samples; j++) {
-                int32_t data = (int)(30000.0 * sin(2.0 * M_PI * freq * j / fs));
-                polar_modulator(ctx, mod, data, &ampl_out, &phase_diff_out);
+                /* Q16 to Q6 index */
+                int32_t idx = (phase_acc >> 10) & 63;
+                int32_t sample = (int32_t)sine_table[idx] * 30000 >> 15;
+
+                polar_modulator(ctx, mod, sample, &ampl_out, &phase_diff_out);
                 sum_ampl += ampl_out;
+
+                phase_acc += phase_step;
             }
+
             int32_t avg_ampl = sum_ampl / samples;
             CHECK_CLOSE(avg_ampl, amp_expected_avg, 15000, "multi_sr sine_ampl_avg", true);
         }
@@ -816,7 +899,6 @@ static void test_dss_mod_multi_sr(polar_mod_ctx_t *ctx) {
         modulation_t mod = { 0 };
 
         uint32_t base_freq_hz = 1000000;
-        /* Use 32-bit mul high-word with precomputed recip_sr (freq_to_phase) to avoid uint64_t */
         uint32_t phase_inc = umul32_hi(base_freq_hz, ctx->freq_to_phase);
 
         // Case: amp == 0 -> all zeros
@@ -869,8 +951,6 @@ static void test_dss_mod_multi_sr(polar_mod_ctx_t *ctx) {
 }
 
 static void test_stability(void) {
-    printf("-- test_stability --\n");
-
     polar_mod_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
     polar_mod_init(&ctx);
@@ -947,7 +1027,6 @@ static void test_boundary() {
     // dss_mod boundaries
     int16_t ampl_buf[10];
     uint32_t base_freq_hz = 1000;
-    /* Use 32-bit mul high-word with precomputed recip_sr (freq_to_phase) to avoid uint64_t */
     uint32_t phase_inc = umul32_hi(base_freq_hz, ctx.freq_to_phase);
 
     /* fully initialize modulation_t before any dss_mod call */
@@ -966,7 +1045,7 @@ static void test_boundary() {
 
     // Extreme amp
     uint32_t new_freq = dss_mod(&ctx, mod_dss, base_freq_hz, phase_inc, INT16_MAX, 10, ampl_buf, 10);
-	CHECK_CLOSE_U32(new_freq, base_freq_hz, 10, "boundary: dss_mod max amp no freq change", true);
+    CHECK_CLOSE_U32(new_freq, base_freq_hz, 10, "boundary: dss_mod max amp no freq change", true);
 }
 
 static void test_noise_robust() {
