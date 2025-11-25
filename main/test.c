@@ -1204,8 +1204,6 @@ void all_test(void) {
         printf("-- Start simulation -- \n");
         simulation();
     }
-
-    return 0;
 #endif
 }
 

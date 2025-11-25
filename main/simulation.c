@@ -38,7 +38,7 @@
 #include "libpolarmod.h"
 #include "simulation.h"
 
-#define DIRECTORY "test/simulation_result"
+#define DIRECTORY "simulation_result"
 #define FFT_SIZE 4096
 #define WIDE_SPECTRUM_HALF_BW 250000.0 // Half bandwidth (Hz) for the wide spectrum plot (± value)
 
