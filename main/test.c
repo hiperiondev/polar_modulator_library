@@ -651,6 +651,7 @@ static void test_hilbert(polar_mod_ctx_t *ctx) {
 }
 
 static void test_dss_mod(polar_mod_ctx_t *ctx) {
+    /* Ensure context is properly initialized first */
     polar_mod_init(ctx); /* make sure freq_to_phase is valid */
 
     const int32_t samples = 1024;
@@ -670,11 +671,22 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
        base_freq_hz = 1 000 000 Hz
        We want:  phase_inc = (base_freq_hz << 32) / sample_rate
        sample_rate is 8 000, 16 000 or 48 000.
-       Rewrite as:  phase_inc = base_freq_hz * ((1<<32) / sample_rate)
+       Rewrite as:  phase_inc = base_freq_hz * ((1<<32)/sample_rate)
        The expression (1<<32)/sr is exactly the constant table
        ctx->freq_to_phase that polar_mod_set_sr() already prepared.
     ----------------------------------------------------------------*/
     uint32_t base_freq_hz = 1000000U;
+
+    /* Ensure context sample rate is set before using freq_to_phase */
+    if (ctx->hot.sample_rate == 0)
+        ctx->hot.sample_rate = SAMPLE_RATE_16KHZ;
+    polar_mod_set_sr(ctx, ctx->hot.sample_rate);
+
+    /* ADDED: Safety check to ensure freq_to_phase is not zero */
+    if (ctx->freq_to_phase == 0) {
+        printf("ERROR: freq_to_phase is zero - context not properly initialized\n");
+        return;
+    }
 
     /* clip to 32-bit range to avoid overflow in the multiply below */
     if (base_freq_hz > 0xFFFFFFFFU / ctx->freq_to_phase)

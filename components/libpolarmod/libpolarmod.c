@@ -355,13 +355,7 @@ int32_t filter_2pol_highpass_300hz(polar_mod_ctx_t *ctx, int32_t x) {
     return biquad_filter(x, ctx->delay_hp300_2p, c);
 }
 
-/* ------------------------------------------------------------------ */
-/*  hilbert()  --  optimized drop-in replacement                      */
-/* ------------------------------------------------------------------ */
 void hilbert(polar_mod_ctx_t *ctx, int32_t sample_in, int32_t *i_out, int32_t *q_out) {
-    /* -------------------------------------------------------------- */
-    /*  GENERIC 32-BIT PATH: integer-only implementation      */
-    /* -------------------------------------------------------------- */
     int32_t w = ctx->hilbert_write_index;
     ctx->hilbert_delay_line[w] = sample_in;
     ctx->hilbert_write_index = (w + 1) & 31;
