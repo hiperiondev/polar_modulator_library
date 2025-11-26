@@ -980,25 +980,35 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         }
         case MOD_USB:
         case MOD_LSB: {
-            /* phase unwrapping – eliminates cumulative drift in SSB */
-            int32_t curr_angle = (int32_t)angle_local;         /* Q24 */
-            int32_t last_angle = (int32_t)ctx->hot.last_angle; /* Q24 */
+            /* Current analytic angle from CORDIC (Q24) */
+            int32_t curr_angle = angle_local;
 
-            /* raw phase difference (still possibly outside -π..+π) */
-            int32_t raw_diff = is_first ? 0 : (curr_angle - last_angle);
+            /* Raw difference */
+            int32_t raw_diff = is_first ? 0 : (curr_angle - (int32_t)ctx->hot.last_angle);
 
-            /* Apply sample-rate dependent Hilbert group-delay compensation */
-            if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR)
+            /* Sample-rate dependent group delay compensation from Hilbert */
+            if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
                 raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
+            }
 
-            /* wrap to -π..+π  */
-            int32_t diff = wrap24(raw_diff); /* guaranteed to be in -π..+π (Q24) */
+            /* Wrap to -π..+π (Q24) */
+            int32_t diff = raw_diff;
+            diff += (1 << 23); /* bring into unsigned range */
+            diff &= 0xFFFFFF;  /* modulo 2^24 */
+            diff -= (1 << 23); /* back to signed */
 
-            /* LSB side-band inversion */
-            if (mode == MOD_LSB)
+            /* Safety: if diff is wildly out of bounds (should never happen with good CORDIC),
+               force zero to prevent clicks */
+            if (diff <= -(1 << 23) || diff >= (1 << 23)) {
+                diff = 0;
+            }
+
+            /* Sideband inversion for LSB */
+            if (mode == MOD_LSB) {
                 diff = -diff;
+            }
 
-            /* Simple 8-tap IIR low-pass on the phase difference (smoothness) */
+            /* Simple 8-tap IIR smoothing on phase difference (reduces splatter) */
             ctx->hot.prev_diff = (diff + 7 * ctx->hot.prev_diff) >> 3;
             angle_diff = ctx->hot.prev_diff;
 
@@ -1006,8 +1016,12 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             ctx->hot.last_angle = curr_angle;
 
             int32_t ampl_tmp = ampl_local;
-            if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0)
-                ampl_tmp = 65535; /* prevent zero envelope on first real sample */
+
+            /* First real sample: avoid zero envelope when signal just starts */
+            if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0) {
+                ampl_tmp = 65535;
+            }
+
             *ampl_out = (int32_t)SATURATE_TO_INT32(ampl_tmp);
             break;
         }
