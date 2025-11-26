@@ -203,8 +203,6 @@ Contributions are welcome, especially given the project’s early stage. To cont
 - Propose code or documentation improvements via pull requests.  
 - Engage in discussions on the repository to share ideas.  
 
-Project developed for educational and research use. Optimized for ESP32 by ChatGPT-5 technical documentation pipeline (2025). Original source author attribution preserved in source file headers.
-
 <div align="right">
   <a href="#readme-top">
     <img src="images/backtotop.png" alt="backtotop" width="30" height="30">
