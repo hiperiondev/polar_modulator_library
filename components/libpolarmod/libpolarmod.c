@@ -39,9 +39,6 @@
 #include "esp_dsp.h"
 #endif
 
-typedef int32_t q15_t;
-typedef int32_t q24_t;
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static int32_t current_sr_index = 1;
@@ -200,11 +197,6 @@ static void polar_mod_global_init(void) {
     recip_initialized = true;
 }
 
-static inline int32_t wrap24(int32_t x) {
-    /* Q24 wrap: (x + 0x800000) & 0xFFFFFF) - 0x800000 */
-    return ((x + 0x800000) & 0xFFFFFF) - 0x800000;
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) {
@@ -239,46 +231,63 @@ int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) 
 
     int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
 
-    /* ---- division-free logarithmic gain steps ---- */
-    if (abs_ampl > ctx->high_vol_thres) {
-        ctx->cnt_high_volume_peaks++;
-        if (ctx->cnt_high_volume_peaks > 3) {
-            /* fast attack: gain -= gain/16 */
-            ctx->hot.gain_value -= ctx->hot.gain_value >> 4;
-            if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
-                ctx->hot.gain_value = (int32_t)ctx->agc_min;
+    bool delayed_mode = (polar_status & 0x00000008) != 0; /* AGC_FROZEN bit reused as delayed flag */
+    if (delayed_mode) {
+        if (abs_ampl > ctx->high_vol_thres) {
+            ctx->cnt_high_volume_peaks++;
+            if (ctx->cnt_high_volume_peaks > 3) {
+                int32_t delta = ctx->hot.gain_value >> 4;
+                int32_t new_gain = ctx->hot.gain_value - delta;
+                if (new_gain < (int32_t)ctx->agc_min)
+                    new_gain = (int32_t)ctx->agc_min;
+                ctx->hot.gain_value = new_gain;
+                ctx->cnt_high_volume_peaks = 0;
+            }
+        } else {
             ctx->cnt_high_volume_peaks = 0;
         }
     } else {
-        ctx->cnt_high_volume_peaks = 0;
-    }
+        if (abs_ampl > ctx->high_vol_thres) {
+            ctx->cnt_high_volume_peaks++;
+            if (ctx->cnt_high_volume_peaks > 3) {
+                int32_t delta = ctx->hot.gain_value >> 4;
+                int32_t new_gain = ctx->hot.gain_value - delta;
+                if (new_gain < (int32_t)ctx->agc_min)
+                    new_gain = (int32_t)ctx->agc_min;
+                ctx->hot.gain_value = new_gain;
+                ctx->cnt_high_volume_peaks = 0;
+            }
+        } else {
+            ctx->cnt_high_volume_peaks = 0;
+        }
 
-    if (abs_ampl < ctx->low_vol_thres) {
-        ctx->cnt_low_volume_event++;
-        if (ctx->cnt_low_volume_event > 20) {
-            /* slow release: gain += (max - gain)/32 */
-            int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 5;
-            ctx->hot.gain_value += delta;
-            if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
-                ctx->hot.gain_value = (int32_t)ctx->agc_max;
+        if (abs_ampl < ctx->low_vol_thres) {
+            ctx->cnt_low_volume_event++;
+            if (ctx->cnt_low_volume_event > 20) {
+                int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 5;
+                int32_t new_gain = ctx->hot.gain_value + delta;
+                if (new_gain > (int32_t)ctx->agc_max)
+                    new_gain = (int32_t)ctx->agc_max;
+                ctx->hot.gain_value = new_gain;
+                ctx->cnt_low_volume_event = 0;
+            }
+        } else {
             ctx->cnt_low_volume_event = 0;
         }
-    } else {
-        ctx->cnt_low_volume_event = 0;
-    }
 
-    if (abs_ampl < ctx->no_vol_thres) {
-        ctx->cnt_no_volume_event++;
-        if (ctx->cnt_no_volume_event > 5) {
-            /* faster release: gain += (max - gain)/16 */
-            int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 4;
-            ctx->hot.gain_value += delta;
-            if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
-                ctx->hot.gain_value = (int32_t)ctx->agc_max;
+        if (abs_ampl < ctx->no_vol_thres) {
+            ctx->cnt_no_volume_event++;
+            if (ctx->cnt_no_volume_event > 5) {
+                int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 4;
+                int32_t new_gain = ctx->hot.gain_value + delta;
+                if (new_gain > (int32_t)ctx->agc_max)
+                    new_gain = (int32_t)ctx->agc_max;
+                ctx->hot.gain_value = new_gain;
+                ctx->cnt_no_volume_event = 0;
+            }
+        } else {
             ctx->cnt_no_volume_event = 0;
         }
-    } else {
-        ctx->cnt_no_volume_event = 0;
     }
 
     if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
