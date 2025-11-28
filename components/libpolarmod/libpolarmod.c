@@ -37,6 +37,9 @@
 
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
 #include "esp_dsp.h"
+#define HOTFUNC IRAM_ATTR
+#else
+#define HOTFUNC
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -83,7 +86,13 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    return (int32_t)umul32_hi((uint32_t)a, (uint32_t)b);
+    uint32_t ua = (uint32_t)a;
+    uint32_t ub = (uint32_t)b;
+    uint32_t hi = umul32_hi(ua, ub);
+    if ((a ^ b) < 0) {
+        hi = ~hi + 1;
+    }
+    return (int32_t)hi;
 #endif
 }
 
@@ -93,26 +102,15 @@ static inline int32_t mul_q8(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(result) : "r"(a), "r"(b));
     return result;
 #else
-    /* Portable fallback without 64-bit arithmetic:
-     * We compute 32x32 -> 64 via low32 and high32 parts (both 32-bit).
-     * Then (product >> 8) = (hi << 24) | (lo >> 8).
-     * Add rounding if bit 7 of low part is set (equivalent to adding 1<<7
-     * before >>8).
-     */
     uint32_t ua = (uint32_t)a;
     uint32_t ub = (uint32_t)b;
-
-    uint32_t lo = ua * ub;           /* low 32 bits of 64-bit product */
-    uint32_t hi = umul32_hi(ua, ub); /* existing function returns high half */
-
-    /* combine: product >> 8  = (hi << 24) | (lo >> 8) */
+    uint32_t lo = ua * ub;
+    uint32_t hi = umul32_hi(ua, ub);
     uint32_t res32 = (hi << 24) | (lo >> 8);
-
-    /* rounding: if bit 7 of 'lo' was set then increment result */
-    if (lo & 0x80U) {
+    if (lo & 0x80U)
         res32++;
-    }
-
+    if ((a ^ b) < 0)
+        res32 = ~res32 + 1;
     return (int32_t)res32;
 #endif
 }
@@ -199,7 +197,7 @@ static void polar_mod_global_init(void) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) {
+HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) {
     if (!ctx)
         return 256;
 
@@ -373,7 +371,7 @@ int32_t filter_2pol_highpass_300hz(polar_mod_ctx_t *ctx, int32_t x) {
     return biquad_filter(x, ctx->delay_hp300_2p, c);
 }
 
-void hilbert(polar_mod_ctx_t *ctx, int32_t sample_in, int32_t *i_out, int32_t *q_out) {
+HOTFUNC void hilbert(polar_mod_ctx_t *ctx, int32_t sample_in, int32_t *i_out, int32_t *q_out) {
     int32_t w = ctx->hilbert_write_index;
     ctx->hilbert_delay_line[w] = sample_in;
     ctx->hilbert_write_index = (w + 1) & 31;
@@ -412,7 +410,7 @@ void hilbert_reset(polar_mod_ctx_t *ctx) {
     ctx->hilbert_write_index = 0;
 }
 
-void cordic(int32_t x, int32_t y, int32_t *out_abs, int32_t *out_angle) {
+HOTFUNC void cordic(int32_t x, int32_t y, int32_t *out_abs, int32_t *out_angle) {
     // Zero input handling remains unchanged in both paths
     if (x == 0 && y == 0) {
         *out_abs = 0;
