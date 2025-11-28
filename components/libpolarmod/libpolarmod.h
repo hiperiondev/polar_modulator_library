@@ -55,8 +55,8 @@
 #ifndef LIBPOLARMOD_H_
 #define LIBPOLARMOD_H_
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "macros.h"
 
@@ -65,13 +65,13 @@
 /* ============================================================================================= */
 
 /** @brief Major version - incremented only on API/ABI breaks */
-#define POLAR_MOD_VERSION_MAJOR  0
+#define POLAR_MOD_VERSION_MAJOR 0
 
 /** @brief Minor version - incremented on new features */
-#define POLAR_MOD_VERSION_MINOR  1
+#define POLAR_MOD_VERSION_MINOR 1
 
 /** @brief Patch version - bug fixes and minor improvements */
-#define POLAR_MOD_VERSION_PATCH  0
+#define POLAR_MOD_VERSION_PATCH 0
 
 /* ============================================================================================= */
 /* Status and control flags                                                                      */
@@ -84,16 +84,16 @@
  * These flags are used both internally and exposed to the user for monitoring and control.
  */
 typedef enum {
-    PTT_ACTIVE = 0x00000001, /**< Transmission (PTT) is active */
-    AGC_TRAINING = 0x00000002, /**< AGC is learning mic level (no PTT) */
-    AGC_FROZEN = 0x00000004, /**< AGC gain manually frozen */
-    AUDIO_SILENCE = 0x00000008, /**< Input below near-silence threshold */
-    AUDIO_LOW = 0x00000010, /**< Low speech level detected */
+    PTT_ACTIVE = 0x00000001,     /**< Transmission (PTT) is active */
+    AGC_TRAINING = 0x00000002,   /**< AGC is learning mic level (no PTT) */
+    AGC_FROZEN = 0x00000004,     /**< AGC gain manually frozen */
+    AUDIO_SILENCE = 0x00000008,  /**< Input below near-silence threshold */
+    AUDIO_LOW = 0x00000010,      /**< Low speech level detected */
     AUDIO_MIDLEVEL = 0x00000020, /**< Normal speech peaks present */
-    AUDIO_OVF = 0x00000040, /**< ADC overflow/clipping detected */
-    DC_BLOCK_AM = 0x00000080, /**< Enable IIR DC blocking in AM mode */
-    CARRIER_FIXED = 0x00000100, /**< Carrier frequency is fixed (used by dss_mod) */
-    INPUT_IS_IQ = 0x00000200, /**< Input is interleaved signed I/Q (32-bit) instead of audio */
+    AUDIO_OVF = 0x00000040,      /**< ADC overflow/clipping detected */
+    DC_BLOCK_AM = 0x00000080,    /**< Enable IIR DC blocking in AM mode */
+    CARRIER_FIXED = 0x00000100,  /**< Carrier frequency is fixed (used by dss_mod) */
+    INPUT_IS_IQ = 0x00000200,    /**< Input is interleaved signed I/Q (32-bit) instead of audio */
 } polar_status_e;
 
 /* ============================================================================================= */
@@ -106,12 +106,12 @@ typedef enum {
  */
 typedef enum {
     MOD_FMN = 0, /**< FM Narrow – 2.5 kHz deviation (ham repeaters) */
-    MOD_LSB, /**< Lower Sideband SSB */
-    MOD_USB, /**< Upper Sideband SSB */
-    MOD_CW, /**< Continuous Wave (constant carrier) */
-    MOD_FM, /**< Standard FM – 5 kHz deviation */
-    MOD_AM, /**< Amplitude Modulation (full carrier) */
-    MOD_FMW /**< FM Broadcast – 75 kHz deviation */
+    MOD_LSB,     /**< Lower Sideband SSB */
+    MOD_USB,     /**< Upper Sideband SSB */
+    MOD_CW,      /**< Continuous Wave (constant carrier) */
+    MOD_FM,      /**< Standard FM – 5 kHz deviation */
+    MOD_AM,      /**< Amplitude Modulation (full carrier) */
+    MOD_FMW      /**< FM Broadcast – 75 kHz deviation */
 } modulation_mode_t;
 
 /**
@@ -119,9 +119,9 @@ typedef enum {
  * @brief Diagnostic / test signal generation modes
  */
 typedef enum {
-    SPECIAL_MODULATION_NORMAL = 0, /**< Normal audio-driven operation */
+    SPECIAL_MODULATION_NORMAL = 0,    /**< Normal audio-driven operation */
     SPECIAL_MODULATION_2_TONE_SIG_IQ, /**< Two-tone test (700 + 1900 Hz) for IMD testing */
-    SPECIAL_MODULATION_3_TONE_SIG_IQ /**< Three-tone test for composite IMD */
+    SPECIAL_MODULATION_3_TONE_SIG_IQ  /**< Three-tone test for composite IMD */
 } special_modulation_t;
 
 /* ============================================================================================= */
@@ -141,7 +141,7 @@ typedef enum {
     FILTER_LP_3400_2pol, /**< 2-pole Butterworth LPF @ 3400 Hz – slightly sharper than 3 kHz */
 
     FILTER_LP_3000_4pol, /**< 4-pole Bessel LPF @ 3000 Hz – very clean voice bandwidth, minimal ringing */
-    FILTER_LP_3400_4pol /**< 4-pole Butterworth LPF @ 3400 Hz – maximum flatness in passband, used for hi-fi SSB */
+    FILTER_LP_3400_4pol  /**< 4-pole Butterworth LPF @ 3400 Hz – maximum flatness in passband, used for hi-fi SSB */
 } filter_pre_lp_t;
 
 /**
@@ -157,9 +157,9 @@ typedef enum {
     FILTER_HP_300_4pol, /**< 4-pole Butterworth HPF @ 300 Hz – standard for most SSB voice (removes most plosives) */
     FILTER_HP_300_2pol, /**< 2-pole Butterworth HPF @ 300 Hz – lighter version, less phase shift */
 
-    FILTER_HP_500_1pol, /**< 1-pole Butterworth HPF @ 500 Hz – very gentle, mainly DC block + light bass cut */
+    FILTER_HP_500_1pol,  /**< 1-pole Butterworth HPF @ 500 Hz – very gentle, mainly DC block + light bass cut */
     FILTER_HP_1000_1pol, /**< 1-pole Butterworth HPF @ 1000 Hz – aggressive bass cut (DX/ESSB style) */
-    FILTER_HP_2000_1pol /**< 1-pole Butterworth HPF @ 2000 Hz – extreme "broadcast" voicing (rarely used) */
+    FILTER_HP_2000_1pol  /**< 1-pole Butterworth HPF @ 2000 Hz – extreme "broadcast" voicing (rarely used) */
 } filter_pre_hp_t;
 
 /**
@@ -170,9 +170,9 @@ typedef enum {
  */
 typedef enum {
     FILTER_PB_NONE = 0, /**< No passband shaping */
-    FILTER_PB_500, /**< Future: low-shelf or tilt centered around 500 Hz */
-    FILTER_PB_1k, /**< Future: mid-range emphasis around 1 kHz */
-    FILTER_PB_2k /**< Future: presence boost around 2 kHz */
+    FILTER_PB_500,      /**< Future: low-shelf or tilt centered around 500 Hz */
+    FILTER_PB_1k,       /**< Future: mid-range emphasis around 1 kHz */
+    FILTER_PB_2k        /**< Future: presence boost around 2 kHz */
 } filter_pre_pb_t;
 
 /**
@@ -189,7 +189,7 @@ typedef enum {
     FILTER_POST_LP_3400_2pol, /**< 2-pole Butterworth LPF @ 3400 Hz on I and Q – extended audio */
 
     FILTER_POST_LP_3000_4pol, /**< 4-pole Bessel LPF @ 3000 Hz (two cascaded biquads) – competition-grade SSB */
-    FILTER_POST_LP_3400_4pol /**< 4-pole Butterworth LPF @ 3400 Hz – maximum transmitted bandwidth with flat response */
+    FILTER_POST_LP_3400_4pol  /**< 4-pole Butterworth LPF @ 3400 Hz – maximum transmitted bandwidth with flat response */
 } filter_post_lp_t;
 
 /* ============================================================================================= */
@@ -200,9 +200,9 @@ typedef enum {
  * @brief Automatic Gain Control operating modes
  */
 typedef enum {
-    AGC_NONE = 0, /**< No AGC – fixed gain */
-    AGC_SIMPLE, /**< Classic compressor – constant output level */
-    AGC_DELAYED, /**< Acts only on peaks above threshold (prevents pumping) */
+    AGC_NONE = 0,    /**< No AGC – fixed gain */
+    AGC_SIMPLE,      /**< Classic compressor – constant output level */
+    AGC_DELAYED,     /**< Acts only on peaks above threshold (prevents pumping) */
     AGC_COMPLEX_FORM /**< Reserved for future advanced per-sample AGC */
 } agc_type_t;
 
@@ -213,14 +213,14 @@ typedef enum {
  * Placed first in context for maximum performance on Cortex-M. Accessed on every sample.
  */
 typedef struct {
-    int32_t gain_value; /**< Current AGC gain, Q8 format (256 = 1.0) */
-    int32_t n; /**< Sample counter for AGC period */
-    int32_t sr_idx; /**< Current sample rate index (0=8k, 1=16k, 2=48k) */
-    int32_t last_angle; /**< Previous unwrapped phase angle (Q24) – for phase continuity */
-    int32_t prev_diff; /**< Filtered previous phase difference (Q24) – for unwrapping */
-    int32_t counter; /**< General-purpose counter */
+    int32_t gain_value;  /**< Current AGC gain, Q8 format (256 = 1.0) */
+    int32_t n;           /**< Sample counter for AGC period */
+    int32_t sr_idx;      /**< Current sample rate index (0=8k, 1=16k, 2=48k) */
+    int32_t last_angle;  /**< Previous unwrapped phase angle (Q24) – for phase continuity */
+    int32_t prev_diff;   /**< Filtered previous phase difference (Q24) – for unwrapping */
+    int32_t counter;     /**< General-purpose counter */
     int32_t sample_rate; /**< Current sample rate in Hz */
-    int32_t energy_q16; /**< Short-term energy estimate (Q16) */
+    int32_t energy_q16;  /**< Short-term energy estimate (Q16) */
 } hot_cacheline_t __attribute__((aligned(32)));
 
 /**
@@ -290,12 +290,10 @@ typedef struct {
 } polar_mod_ctx_t;
 
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-static polar_mod_ctx_t ctx
-  __attribute__((section(".dram0.polar"), aligned(32), unused));
+static polar_mod_ctx_t ctx __attribute__((section(".dram0.polar"), aligned(32), unused));
 #else
 /* 32-bit non-ESP32: align to 32-byte cache line if supported, else 16-byte */
-static polar_mod_ctx_t ctx
-  __attribute__((aligned(32), unused));
+static polar_mod_ctx_t ctx __attribute__((aligned(32), unused));
 #endif
 
 /**
@@ -305,14 +303,14 @@ static polar_mod_ctx_t ctx
  * Passed to polar_modulator() on every sample. Allows dynamic mode/filter changes without reinitialization.
  */
 typedef struct {
-    modulation_mode_t modulation_mode; /**< Active transmission mode */
-    filter_pre_hp_t filter_pre_hp; /**< Pre-emphasis high-pass filter */
-    filter_pre_lp_t filter_pre_lp; /**< Pre-emphasis low-pass filter */
-    filter_pre_pb_t filter_pre_pb; /**< Passband shaping (future use) */
-    filter_post_lp_t filter_post_lp; /**< Post-Hilbert low-pass (SSB cleanup) */
-    agc_type_t agc_type; /**< AGC behavior */
+    modulation_mode_t modulation_mode;       /**< Active transmission mode */
+    filter_pre_hp_t filter_pre_hp;           /**< Pre-emphasis high-pass filter */
+    filter_pre_lp_t filter_pre_lp;           /**< Pre-emphasis low-pass filter */
+    filter_pre_pb_t filter_pre_pb;           /**< Passband shaping (future use) */
+    filter_post_lp_t filter_post_lp;         /**< Post-Hilbert low-pass (SSB cleanup) */
+    agc_type_t agc_type;                     /**< AGC behavior */
     special_modulation_t special_modulation; /**< Test tone mode */
-    uint32_t polar_status; /**< Bitfield of ::polar_status_e flags */
+    uint32_t polar_status;                   /**< Bitfield of ::polar_status_e flags */
 } modulation_t;
 
 /* ============================================================================================= */
@@ -363,7 +361,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
  * @return Updated carrier frequency after applying audio-derived offset
  */
 uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_freq_hz, uint32_t phase_inc, int16_t amp, int32_t samples, int16_t *ampl_buf,
-        int32_t update_interval);
+                 int32_t update_interval);
 
 /**
  * @brief Force sample rate change and reset all filter states

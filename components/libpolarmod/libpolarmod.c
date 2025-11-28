@@ -203,6 +203,7 @@ int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) 
     if (!ctx)
         return 256;
 
+    // Detect sample-rate change and reconfigure thresholds
     if (ctx->hot.sample_rate <= 0 || ctx->last_sample_rate != ctx->hot.sample_rate) {
         polar_mod_set_sr(ctx, ctx->hot.sample_rate);
         ctx->last_sample_rate = ctx->hot.sample_rate;
@@ -211,6 +212,7 @@ int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) 
         ctx->cnt_no_volume_event = 0;
     }
 
+    // When PTT inactive only enforce min/max bounds
     if (!(polar_status & PTT_ACTIVE)) {
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
             ctx->hot.gain_value = (int32_t)ctx->agc_min;
@@ -219,6 +221,7 @@ int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) 
         return ctx->hot.gain_value;
     }
 
+    // Period counter; skip until next update
     ctx->hot.n++;
     if (ctx->hot.n < ctx->agc_period) {
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
@@ -229,66 +232,72 @@ int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) 
     }
     ctx->hot.n = 0;
 
-    int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
+    uint32_t abs_ampl = (ampl < 0) ? (uint32_t)(-ampl) : (uint32_t)ampl;
 
-    bool delayed_mode = (polar_status & 0x00000008) != 0; /* AGC_FROZEN bit reused as delayed flag */
-    if (delayed_mode) {
-        if (abs_ampl > ctx->high_vol_thres) {
+    // Hysteresis state machine with hold counters
+    if (abs_ampl >= HIGH_VOL_THRES) {
+        // High volume peak detected
+        if (ctx->cnt_high_volume_peaks < 3)
             ctx->cnt_high_volume_peaks++;
-            if (ctx->cnt_high_volume_peaks > 3) {
-                int32_t delta = ctx->hot.gain_value >> 4;
-                int32_t new_gain = ctx->hot.gain_value - delta;
-                if (new_gain < (int32_t)ctx->agc_min)
-                    new_gain = (int32_t)ctx->agc_min;
-                ctx->hot.gain_value = new_gain;
-                ctx->cnt_high_volume_peaks = 0;
+        ctx->cnt_low_volume_event = 0;
+        ctx->cnt_no_volume_event = 0;
+
+        if (ctx->cnt_high_volume_peaks >= 2) {
+            // Sustained high level → fast attack
+            ctx->hot.gain_value -= ctx->hot.gain_value >> 4;
+        }
+    } else if (abs_ampl >= LOW_VOL_THRES) {
+        // Mid-level speech (normal talking)
+        ctx->cnt_high_volume_peaks = 0;
+        if (ctx->cnt_low_volume_event < 4)
+            ctx->cnt_low_volume_event++;
+        ctx->cnt_no_volume_event = 0;
+
+        if (ctx->cnt_low_volume_event >= 3) {
+            // Sustained normal speech → slow release toward unity
+            int32_t target = 32767;
+            int32_t diff = target - ctx->hot.gain_value;
+            if (diff > 0) {
+                ctx->hot.gain_value += diff >> 5;
             }
-        } else {
-            ctx->cnt_high_volume_peaks = 0;
+        }
+    } else if (abs_ampl >= NO_VOL_THRES) {
+        // Low but detectable signal
+        ctx->cnt_high_volume_peaks = 0;
+        ctx->cnt_low_volume_event = 0;
+        if (ctx->cnt_no_volume_event < 6)
+            ctx->cnt_no_volume_event++;
+
+        // Gradual recovery during quiet speech
+        if (ctx->cnt_no_volume_event >= 4) {
+            int32_t target = 49152; // Slightly above unity for recovery
+            int32_t diff = target - ctx->hot.gain_value;
+            if (diff > 0) {
+                ctx->hot.gain_value += diff >> 6;
+            }
         }
     } else {
-        if (abs_ampl > ctx->high_vol_thres) {
-            ctx->cnt_high_volume_peaks++;
-            if (ctx->cnt_high_volume_peaks > 3) {
-                int32_t delta = ctx->hot.gain_value >> 4;
-                int32_t new_gain = ctx->hot.gain_value - delta;
-                if (new_gain < (int32_t)ctx->agc_min)
-                    new_gain = (int32_t)ctx->agc_min;
-                ctx->hot.gain_value = new_gain;
-                ctx->cnt_high_volume_peaks = 0;
-            }
-        } else {
-            ctx->cnt_high_volume_peaks = 0;
-        }
-
-        if (abs_ampl < ctx->low_vol_thres) {
-            ctx->cnt_low_volume_event++;
-            if (ctx->cnt_low_volume_event > 20) {
-                int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 5;
-                int32_t new_gain = ctx->hot.gain_value + delta;
-                if (new_gain > (int32_t)ctx->agc_max)
-                    new_gain = (int32_t)ctx->agc_max;
-                ctx->hot.gain_value = new_gain;
-                ctx->cnt_low_volume_event = 0;
-            }
-        } else {
-            ctx->cnt_low_volume_event = 0;
-        }
-
-        if (abs_ampl < ctx->no_vol_thres) {
+        // Near silence
+        ctx->cnt_high_volume_peaks = 0;
+        ctx->cnt_low_volume_event = 0;
+        if (ctx->cnt_no_volume_event < 8)
             ctx->cnt_no_volume_event++;
-            if (ctx->cnt_no_volume_event > 5) {
-                int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> 4;
-                int32_t new_gain = ctx->hot.gain_value + delta;
-                if (new_gain > (int32_t)ctx->agc_max)
-                    new_gain = (int32_t)ctx->agc_max;
-                ctx->hot.gain_value = new_gain;
-                ctx->cnt_no_volume_event = 0;
+
+        // Fast gain recovery during silence (only after sustained quiet)
+        if (ctx->cnt_no_volume_event >= 6) {
+            int32_t target = 65535;
+            int32_t diff = target - ctx->hot.gain_value;
+            if (diff > 0) {
+                ctx->hot.gain_value += diff >> 4;
             }
-        } else {
-            ctx->cnt_no_volume_event = 0;
         }
     }
+
+    // Final bounds clamping
+    if (ctx->hot.gain_value < 64)
+        ctx->hot.gain_value = 64;
+    if (ctx->hot.gain_value > 65535)
+        ctx->hot.gain_value = 65535;
 
     if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
         ctx->hot.gain_value = (int32_t)ctx->agc_min;
