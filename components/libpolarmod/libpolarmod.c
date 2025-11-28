@@ -751,7 +751,6 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     ctx->fm_dev_scales[2] = 3960;
 
     /* 48 kHz uses 16-kHz table -> 16 taps, not 15 */
-    ctx->hilbert_q15 = hilbert_q15_per_sr_alias[sr_idx];
     ctx->hilbert_taps = (sr_idx == 2) ? 16 : hilbert_taps_per_sr[sr_idx];
     ctx->hilbert_k = (ctx->hilbert_taps - 1) / 2;
 
