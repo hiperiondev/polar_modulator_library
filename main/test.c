@@ -32,10 +32,10 @@
 #include <string.h>
 #include <time.h>
 
-#include <iq_hello_120samples.h>
 #include <libpolarmod.h>
 #include <macros.h>
 #include <tables.h>
+#include "iq_hello_120samples.h"
 
 #if defined(__XTENSA__)
 #include "esp_task_wdt.h"

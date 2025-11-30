@@ -116,10 +116,11 @@ static inline int32_t mul_q8(int32_t a, int32_t b) {
 }
 
 static inline int32_t saturate_add(int32_t a, int32_t b) {
-    int32_t res;
-    if (__builtin_add_overflow(a, b, &res))
-        return (a > 0) ? INT32_MAX : INT32_MIN;
-    return res;
+    if (b > 0 && a > INT32_MAX - b)
+        return INT32_MAX;
+    if (b < 0 && a < INT32_MIN - b)
+        return INT32_MIN;
+    return a + b;
 }
 
 static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
@@ -130,21 +131,11 @@ static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
 }
 
 static inline int32_t arith_shift_right(int32_t value, int32_t shift) {
-    /* ---- clamp shift to avoid UB ---- */
     if (shift <= 0)
         return value;
-    if (shift >= 31) { /* result is 0 or -1 */
-        return (value >= 0) ? 0 : -1;
-    }
-
-    if (value >= 0) {
-        return value >> shift; /* positive: logical is arithmetic */
-    } else {
-        /* ---- safe absolute via unsigned ---- */
-        uint32_t abs_u = (uint32_t)(-(uint32_t)value); /* works for INT32_MIN */
-        abs_u >>= shift;
-        return -(int32_t)abs_u; /* restore sign */
-    }
+    if (shift >= 31)
+        return value >> 31; // 0 or -1
+    return value >> shift;
 }
 
 static inline int32_t round_shift_q15(int32_t x) {
