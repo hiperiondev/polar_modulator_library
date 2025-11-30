@@ -50,6 +50,27 @@ static uint16_t recip_table[NUM_SR][257];
 static bool recip_initialized = false;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
+    if (n <= 0)
+        return x;
+    if (x >= 0) {
+        return (x + (1 << (n - 1))) >> n; // positive: round to nearest
+    } else {
+        // negative: add bias before shift to round toward zero (same as original code intent)
+        return (x - (1 << (n - 1))) >> n;
+    }
+}
+
+static inline int32_t ARITH_RSH(int32_t x, int n) {
+    if (n <= 0)
+        return x;
+    if (x >= 0)
+        return x >> n;
+    // negative values: convert to positive, shift, restore sign
+    uint32_t ux = (uint32_t)(-x);
+    uint32_t shifted = ux >> n;
+    return -(int32_t)shifted;
+}
 
 static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
@@ -129,14 +150,6 @@ static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
     return SATURATE_ADD(a, shifted);
 }
 
-static inline int32_t arith_shift_right(int32_t value, int32_t shift) {
-    if (shift <= 0)
-        return value;
-    if (shift >= 31)
-        return value >> 31; // 0 or -1
-    return value >> shift;
-}
-
 static inline int32_t round_shift_q15(int32_t x) {
     int32_t s = x >> 31;      // 0 or -1
     uint32_t u = (x ^ s) - s; // abs
@@ -153,14 +166,14 @@ static inline int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coef
     w1 = SATURATE_TO_INT32(CLIP16(w1));
     w2 = SATURATE_TO_INT32(CLIP16(w2));
 
-    int32_t a1w1 = (c->a1 * w1) >> 14;
-    int32_t a2w2 = (c->a2 * w2) >> 14;
+    int32_t a1w1 = ARITH_RSH((c->a1 * w1), 14);
+    int32_t a2w2 = ARITH_RSH((c->a2 * w2), 14);
     int32_t temp = SATURATE_ADD(x, SATURATE_ADD(a1w1, a2w2));
     temp = SATURATE_TO_INT32(CLIP16(temp));
 
-    int32_t b0w = (c->b0 * temp) >> 14;
-    int32_t b1w1 = (c->b1 * w1) >> 14;
-    int32_t b2w2 = (c->b2 * w2) >> 14;
+    int32_t b0w = ARITH_RSH((c->b0 * temp), 14);
+    int32_t b1w1 = ARITH_RSH((c->b1 * w1), 14);
+    int32_t b2w2 = ARITH_RSH((c->b2 * w2), 14);
     int32_t y = SATURATE_ADD(b0w, SATURATE_ADD(b1w1, b2w2));
 
     delay[1] = (int)w1;
@@ -254,7 +267,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             int shift = 5;
             if (ctx->hot.sr_idx == 2)
                 shift = 4; // 48 kHz faster release
-            int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> shift;
+            int32_t delta = ARITH_RSH(((int32_t)ctx->agc_max - ctx->hot.gain_value), shift);
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
                 ctx->hot.gain_value = (int32_t)ctx->agc_max;
@@ -272,7 +285,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             int shift = 4;
             if (ctx->hot.sr_idx == 2)
                 shift = 3; // 48 kHz faster
-            int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> shift;
+            int32_t delta = ARITH_RSH(((int32_t)ctx->agc_max - ctx->hot.gain_value), shift);
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
                 ctx->hot.gain_value = (int32_t)ctx->agc_max;
@@ -969,12 +982,12 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             int32_t signed_env = data_post;
             if (modulation.polar_status & DC_BLOCK_AM) {
                 int32_t diff = signed_env - ctx->am_data_dc_mean;
-                int32_t incr = diff >> dc_shift[ctx->hot.sr_idx];
+                int32_t incr = ARITH_RSH(diff, dc_shift[ctx->hot.sr_idx]);
                 ctx->am_data_dc_mean = SATURATE_TO_INT32(ctx->am_data_dc_mean + incr);
                 signed_env -= ctx->am_data_dc_mean;
             }
             /* AM carrier level 50% resting carrier */
-            int32_t env = signed_env >> 10; /* reduce swing to avoid overflow */
+            int32_t env = ARITH_RSH(signed_env, 10); /* reduce swing to avoid overflow */
             env = env + 16384;              /* add 50% carrier (16384 = 0.5 * 32768) */
             if (env < 0)
                 env = 0; /* clamp negative peaks */
@@ -1012,7 +1025,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             }
 
             /* Simple 8-tap IIR smoothing on phase difference (reduces splatter) */
-            ctx->hot.prev_diff = (diff + 7 * ctx->hot.prev_diff) >> 3;
+            ctx->hot.prev_diff = ARITH_RSH_ROUND((diff + 7 * ctx->hot.prev_diff), 3);
             angle_diff = ctx->hot.prev_diff;
 
             /* Store current angle for next sample */
@@ -1089,15 +1102,15 @@ uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_freq_hz, 
     if (abs_amp < NO_VOL_THRES) {
         /* silence ramp-up */
         int32_t desired = 1024;
-        int32_t ramp_step = (desired - (int32_t)ctx->hot.gain_value) >> 4;
+        int32_t ramp_step = ARITH_RSH((desired - ctx->hot.gain_value), 4);
         if (ramp_step > 0)
             ctx->hot.gain_value = SATURATE_ADD((int32_t)ctx->hot.gain_value, ramp_step);
     } else if (amp != 0) {
         /* logarithmic gain adjustment based on amplitude */
         if (abs_amp > HIGH_VOL_THRES) {
-            ctx->hot.gain_value -= ctx->hot.gain_value >> 4; /* fast attack */
+            ctx->hot.gain_value -= ARITH_RSH(ctx->hot.gain_value, 4); /* fast attack */
         } else {
-            ctx->hot.gain_value += ((32767 - (int32_t)ctx->hot.gain_value) >> 5); /* slow release */
+            ctx->hot.gain_value += ARITH_RSH((32767 - ctx->hot.gain_value), 5); /* slow release */
         }
         if (ctx->hot.gain_value > 32767)
             ctx->hot.gain_value = 32767;
@@ -1138,7 +1151,7 @@ uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_freq_hz, 
                 diff = INT32_MAX >> dc_alpha;
             if (diff < (INT32_MIN >> dc_alpha))
                 diff = INT32_MIN >> dc_alpha;
-            int32_t incr = arith_shift_right(diff, dc_alpha);
+            int32_t incr = ARITH_RSH(diff, dc_alpha);
             mean_corr = SATURATE_ADD(mean_corr, incr);
             corr32 = ampl_out - mean_corr;
         } else {
