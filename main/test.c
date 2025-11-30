@@ -32,6 +32,7 @@
 #include <string.h>
 #include <time.h>
 
+#include <iq_hello_120samples.h>
 #include <libpolarmod.h>
 #include <macros.h>
 #include <tables.h>
@@ -1168,6 +1169,73 @@ static void test_iq_audio_input(void) {
     }
 }
 
+static void test_iq_real_speech(void) {
+    const int N = sizeof(iq_raw) / sizeof(iq_raw[0]);
+
+    polar_mod_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    polar_mod_init(&ctx);
+    polar_mod_set_sr(&ctx, SAMPLE_RATE_16KHZ);
+
+    modulation_t mod = { .modulation_mode = MOD_USB,
+                         .filter_pre_hp = FILTER_HP_NONE,
+                         .filter_pre_lp = FILTER_LP_NONE,
+                         .filter_pre_pb = FILTER_PB_NONE,
+                         .filter_post_lp = FILTER_POST_LP_NONE,
+                         .agc_type = AGC_NONE,
+                         .special_modulation = SPECIAL_MODULATION_NORMAL,
+                         .polar_status = INPUT_IS_IQ };
+
+    ctx.first_call = true;
+
+    int32_t max_ampl = 0;
+    int32_t min_ampl = 65535;
+    int32_t max_phase_diff = -(1 << 23);
+    int32_t min_phase_diff = (1 << 23);
+    int32_t last_phase = 0;
+    int32_t max_jump = 0;
+
+    for (int i = 0; i < N; i++) {
+        int32_t I_16 = (int16_t)iq_raw[i];
+        int32_t Q_16 = (int16_t)(iq_raw[i] << 16 >> 16);
+        int32_t iq_packed = (I_16 << 16) | (Q_16 & 0xFFFF);
+
+        int32_t ampl_out, phase_diff_out;
+        int32_t rc = polar_modulator(&ctx, mod, iq_packed, &ampl_out, &phase_diff_out);
+
+        CHECK_EQ(rc, 0, "iq_real_speech: polar_modulator returns 0", false);
+        CHECK(ampl_out >= 0 && ampl_out <= 65535, "iq_real_speech: amplitude in 0..65535", false);
+        CHECK(phase_diff_out >= -(1 << 23) && phase_diff_out < (1 << 23), "iq_real_speech: phase diff in -π..+π (Q24)", false);
+
+        /* statistics */
+        if (ampl_out > max_ampl)
+            max_ampl = ampl_out;
+        if (ampl_out < min_ampl)
+            min_ampl = ampl_out;
+        if (phase_diff_out > max_phase_diff)
+            max_phase_diff = phase_diff_out;
+        if (phase_diff_out < min_phase_diff)
+            min_phase_diff = phase_diff_out;
+
+        if (i > 0) {
+            int32_t jump = (phase_diff_out > last_phase) ? (phase_diff_out - last_phase) : (last_phase - phase_diff_out);
+            if (jump > max_jump)
+                max_jump = jump;
+        }
+        last_phase = phase_diff_out;
+    }
+
+    /* Real speech easily contains 700-900 Hz components → allow up to approximately 0.35 rad */
+    const int32_t MAX_REASONABLE_JUMP_Q24 = 580000; /* approximately 0.35 rad @ 16 kHz */
+
+    CHECK_CLOSE(max_ampl, 65535, 65535 * 0.40, "iq_real_speech: peak amplitude reasonable (>=60%)", true);
+    CHECK(min_ampl <= 3000, "iq_real_speech: silence parts go low", true);
+    CHECK(max_jump <= MAX_REASONABLE_JUMP_Q24, "iq_real_speech: phase jumps reasonable for voice (≤0.35 rad)", true);
+
+    printf("     stats: ampl [%5" PRId32 "…%5" PRId32 "], phase_diff [%8" PRId32 "…%8" PRId32 "], max_jump=%" PRId32 " (%.3f rad)\n", min_ampl, max_ampl,
+           min_phase_diff, max_phase_diff, max_jump, (double)max_jump / (1 << 24) * 2.0 * M_PI);
+}
+
 //////////////////////////////////////
 
 #if defined(__XTENSA__)
@@ -1283,6 +1351,9 @@ void all_test(void) {
 
     printf("-- test_noise_robust -- \n");
     test_noise_robust();
+
+    printf("-- I/Q direct mode – real speech fragment (16 kHz) --\n");
+    test_iq_real_speech();
 
     printf("--- TESTS: %" PRId32 ", FAILED:%" PRId32 "\n", tests_qty, tests_failed);
 
