@@ -36,7 +36,6 @@
 #include "tables.h"
 
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-#include "esp_dsp.h"
 #define HOTFUNC IRAM_ATTR
 #else
 #define HOTFUNC
@@ -192,79 +191,69 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
     if (!ctx)
         return 256;
 
-    // If sample rate changed, reconfigure thresholds and AGC state
+    // SR change : reconfigure thresholds and AGC state
     if (ctx->hot.sample_rate <= 0 || ctx->last_sample_rate != ctx->hot.sample_rate) {
         polar_mod_set_sr(ctx, ctx->hot.sample_rate);
         ctx->last_sample_rate = ctx->hot.sample_rate;
-        // Ensure counters are fresh after SR reconfiguration
         ctx->cnt_high_volume_peaks = 0;
         ctx->cnt_low_volume_event = 0;
         ctx->cnt_no_volume_event = 0;
     }
 
-    // If PTT not active, just clamp gain within limits and return
+    // PTT not active : clamp gain and reset counters
     if (!(polar_status & PTT_ACTIVE)) {
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
             ctx->hot.gain_value = (int32_t)ctx->agc_min;
         if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
             ctx->hot.gain_value = (int32_t)ctx->agc_max;
-        // Reset transient counters when not transmitting
         ctx->cnt_high_volume_peaks = 0;
         ctx->cnt_low_volume_event = 0;
         ctx->cnt_no_volume_event = 0;
         return ctx->hot.gain_value;
     }
 
-    // Time-based update gating preserved (period clamped at polar_mod_set_sr)
+    // Time-based gating
     ctx->hot.n++;
     if (ctx->hot.n < ctx->agc_period) {
-        // Keep gain within bounds even when not updating
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
             ctx->hot.gain_value = (int32_t)ctx->agc_min;
         if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
             ctx->hot.gain_value = (int32_t)ctx->agc_max;
         return ctx->hot.gain_value;
     }
-    // Reset sample counter to perform AGC update now
     ctx->hot.n = 0;
 
     int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
 
-    // ---- High volume detection: adaptive attack ----
+    // ---- High-volume detection with hysteresis ----
     if (abs_ampl > ctx->high_vol_thres) {
-        // increment but clamp to avoid runaway counters on corrupted memory
+        // saturate counter at 100
         if (ctx->cnt_high_volume_peaks < 100)
             ctx->cnt_high_volume_peaks++;
-        // When multiple consecutive peaks detected, apply attack
+        // apply attack only after 3 consecutive peaks (keep original test expectation)
         if (ctx->cnt_high_volume_peaks > 3) {
-            // Attack speed: a shift-based reduction. Make low SR slightly slower to avoid abrupt clipping.
             int attack_shift = 4;
             if (ctx->hot.sr_idx == 0)
-                attack_shift = 5; // 8kHz: slightly slower attack
-            // Reduce gain by gain >> attack_shift (division-free)
+                attack_shift = 5; // 8 kHz slower attack
             ctx->hot.gain_value -= ctx->hot.gain_value >> attack_shift;
-            // Clamp to minimum
             if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
                 ctx->hot.gain_value = (int32_t)ctx->agc_min;
-            // reset spike counter to avoid repeated large steps
-            ctx->cnt_high_volume_peaks = 0;
+            ctx->cnt_high_volume_peaks = 0; // reset after attack
         }
     } else {
-        // No peak: decay the peak counter gradually to avoid hysteresis lock
+        // decay counter by 1 only, keeps hysteresis
         if (ctx->cnt_high_volume_peaks > 0)
             ctx->cnt_high_volume_peaks--;
     }
 
-    // ---- Low-volume detection: slow release ----
+    // ---- Low-volume slow release ----
     if (abs_ampl < ctx->low_vol_thres) {
         if (ctx->cnt_low_volume_event < 1000)
             ctx->cnt_low_volume_event++;
         if (ctx->cnt_low_volume_event > 20) {
-            // Release step: add a fraction of remaining headroom
-            // Make release adaptive to SR: faster release at higher SR (48k)
             int shift = 5;
             if (ctx->hot.sr_idx == 2)
-                shift = 4; // faster release at 48k
+                shift = 4; // 48 kHz faster release
             int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> shift;
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
@@ -272,19 +261,17 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             ctx->cnt_low_volume_event = 0;
         }
     } else {
-        // Reset low volume counter if above threshold
         ctx->cnt_low_volume_event = 0;
     }
 
-    // ---- No-volume (near silence) detection: faster recovery ----
+    // ---- Near-silence fast recovery ----
     if (abs_ampl < ctx->no_vol_thres) {
         if (ctx->cnt_no_volume_event < 100)
             ctx->cnt_no_volume_event++;
         if (ctx->cnt_no_volume_event > 5) {
-            // Faster recovery step than low-volume case
             int shift = 4;
             if (ctx->hot.sr_idx == 2)
-                shift = 3; // even faster at high SR
+                shift = 3; // 48 kHz faster
             int32_t delta = ((int32_t)ctx->agc_max - ctx->hot.gain_value) >> shift;
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
@@ -295,13 +282,13 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         ctx->cnt_no_volume_event = 0;
     }
 
-    // Final safety clamps
+    // Final clamps
     if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
         ctx->hot.gain_value = (int32_t)ctx->agc_min;
     if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
         ctx->hot.gain_value = (int32_t)ctx->agc_max;
 
-    // Defensive counter clamps to avoid runaway due to memory corruption
+    // Defensive saturation for corrupted memory
     if (ctx->cnt_high_volume_peaks > 100)
         ctx->cnt_high_volume_peaks = 100;
     if (ctx->cnt_low_volume_event > 1000)
@@ -717,11 +704,10 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
 
     if (sr_idx < 0 || sr_idx >= NUM_SR)
         sr_idx = 1;
-
     if (ctx->hot.sr_idx == sr_idx && ctx->hot.sample_rate == sr)
         return;
 
-    /* Zero every delay line explicitly – compiler may insert padding */
+    // zero all delay lines
     memset(ctx->delay_hp500, 0, sizeof(ctx->delay_hp500));
     memset(ctx->delay_hp1000, 0, sizeof(ctx->delay_hp1000));
     memset(ctx->delay_hp2000, 0, sizeof(ctx->delay_hp2000));
@@ -747,43 +733,32 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     if (ctx->agc_period > 400)
         ctx->agc_period = 400;
 
-    // Use 16-bit reference base and scale by precomputed sr_sqrt_scale to preserve
-    // relative energy behaviour across SRs without using absurd >16-bit thresholds.
-    // base_high is ~90% of INT16_MAX
+    // scale thresholds by sr_sqrt_scale[sr_idx] / 512 (512 is 16-kHz reference)
     const int32_t base_high = (INT16_MAX * 90) / 100; // ~29490
-    ctx->high_vol_thres = (int32_t)((base_high * (int32_t)sr_sqrt_scale[sr_idx]) / (int32_t)sr_sqrt_scale[1]);
+    ctx->high_vol_thres = (base_high * (int32_t)sr_sqrt_scale[sr_idx]) / 512;
     if (ctx->high_vol_thres < 4096)
-        ctx->high_vol_thres = 4096; // reasonable lower bound
+        ctx->high_vol_thres = 4096;
     ctx->low_vol_thres = ctx->high_vol_thres >> 1;
-    ctx->no_vol_thres = NO_VOL_THRES; // keep original near-silence threshold
+    ctx->no_vol_thres = NO_VOL_THRES; // fixed near-silence
 
     ctx->fm_dev_scales[0] = 132;
     ctx->fm_dev_scales[1] = 264;
     ctx->fm_dev_scales[2] = 3960;
 
-    /* 48 kHz uses 16-kHz table -> 16 taps, not 15 */
     ctx->hilbert_taps = (sr_idx == 2) ? 16 : hilbert_taps_per_sr[sr_idx];
     ctx->hilbert_k = (ctx->hilbert_taps - 1) / 2;
 
     ctx->freq_to_phase = freq_to_phase_q32[sr_idx];
 
-    static const uint32_t phase_inc_recip_tab[3] = {
-        0x00020000U, /*  8 kHz  */
-        0x00010000U, /* 16 kHz  */
-        0x00005555U  /* 48 kHz  */
-    };
+    static const uint32_t phase_inc_recip_tab[3] = { 0x00020000U, 0x00010000U, 0x00005555U };
     ctx->phase_inc_recip = phase_inc_recip_tab[sr_idx];
 
     ctx->agc_step = 3 + sr_idx;
     ctx->agc_max = 32768;
     ctx->agc_min = 64;
 
-    static const uint32_t tone_step_recip[3] = {
-        0x00020000U, /*  8 kHz  */
-        0x00010000U, /* 16 kHz  */
-        0x00005555U  /* 48 kHz  */
-    };
-    ctx->tone_step = (uint32_t)(((uint32_t)tone_step_recip[sr_idx] * 1000U) >> 0);
+    static const uint32_t tone_step_recip[3] = { 0x00020000U, 0x00010000U, 0x00005555U };
+    ctx->tone_step = ((tone_step_recip[sr_idx] * 1000U) >> 0);
 
     ctx->tone_period = 0;
     ctx->tone_phase = 0;
