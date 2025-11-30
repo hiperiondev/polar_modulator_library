@@ -717,10 +717,26 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
 
     if (sr_idx < 0 || sr_idx >= NUM_SR)
         sr_idx = 1;
-    if (ctx->hot.sr_idx == sr_idx && ctx->hot.sample_rate == sr)
-        return;
 
-    // zero all delay lines
+    // Early return if sample rate index hasn't changed
+    if (ctx->hot.sr_idx == sr_idx) {
+        ctx->hot.sample_rate = sr;
+        return;
+    }
+
+    // Scale Hilbert delay line contents to preserve state during transition
+    // This prevents audible glitches when changing sample rates dynamically
+    if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
+        int32_t old_scale = sr_sqrt_scale[ctx->hot.sr_idx];
+        int32_t new_scale = sr_sqrt_scale[sr_idx];
+        for (int i = 0; i < N_TAPS; i++) {
+            // Scale each tap proportionally to sample rate change
+            ctx->hilbert_delay_line[i] = (ctx->hilbert_delay_line[i] * new_scale) / old_scale;
+        }
+    }
+
+    // Zero only frequency-dependent biquad filter delays
+    // Filter coefficients change with sample rate, so delay contents become invalid
     memset(ctx->delay_hp500, 0, sizeof(ctx->delay_hp500));
     memset(ctx->delay_hp1000, 0, sizeof(ctx->delay_hp1000));
     memset(ctx->delay_hp2000, 0, sizeof(ctx->delay_hp2000));
@@ -733,9 +749,9 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     memset(ctx->delay_lp_2, 0, sizeof(ctx->delay_lp_2));
     memset(ctx->delay_lp_x, 0, sizeof(ctx->delay_lp_x));
     memset(ctx->delay_lp_y, 0, sizeof(ctx->delay_lp_y));
-    memset(ctx->hilbert_delay_line, 0, sizeof(ctx->hilbert_delay_line));
 
-    ctx->hilbert_write_index = 0;
+    // Preserve Hilbert write index for seamless delay line continuation
+    // Reset phase tracking state since phase increment per sample changes with SR
     ctx->hot.last_angle = 0;
     ctx->hot.prev_diff = 0;
     ctx->hot.sample_rate = sr;
@@ -746,7 +762,7 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     if (ctx->agc_period > 400)
         ctx->agc_period = 400;
 
-    // scale thresholds by sr_sqrt_scale[sr_idx] / 512 (512 is 16-kHz reference)
+    // Scale thresholds by sr_sqrt_scale[sr_idx] / 512 (512 is 16-kHz reference)
     const int32_t base_high = (INT16_MAX * 90) / 100; // ~29490
     ctx->high_vol_thres = (base_high * (int32_t)sr_sqrt_scale[sr_idx]) / 512;
     if (ctx->high_vol_thres < 4096)
@@ -988,7 +1004,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             }
             /* AM carrier level 50% resting carrier */
             int32_t env = ARITH_RSH(signed_env, 10); /* reduce swing to avoid overflow */
-            env = env + 16384;              /* add 50% carrier (16384 = 0.5 * 32768) */
+            env = env + 16384;                       /* add 50% carrier (16384 = 0.5 * 32768) */
             if (env < 0)
                 env = 0; /* clamp negative peaks */
             *ampl_out = (int32_t)SATURATE_TO_INT32(env);

@@ -289,13 +289,6 @@ typedef struct {
     int32_t iq_q_sample; /**< Latched Q sample when INPUT_IS_IQ is active */
 } polar_mod_ctx_t;
 
-#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-static polar_mod_ctx_t ctx __attribute__((section(".dram0.polar"), aligned(32), unused));
-#else
-/* 32-bit non-ESP32: align to 32-byte cache line if supported, else 16-byte */
-static polar_mod_ctx_t ctx __attribute__((aligned(32), unused));
-#endif
-
 /**
  * @struct modulation_t
  * @brief Complete per-call configuration structure
