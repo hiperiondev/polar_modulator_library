@@ -79,24 +79,7 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
     __asm__("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    /* Portable 32-bit implementation for signed high-half multiply */
-    uint32_t ua = (uint32_t)a;
-    uint32_t ub = (uint32_t)b;
-
-    uint32_t al = ua & 0xFFFFU;
-    uint32_t ah = ua >> 16;
-    uint32_t bl = ub & 0xFFFFU;
-    uint32_t bh = ub >> 16;
-
-    uint32_t ll = al * bl;
-    uint32_t lh = al * bh;
-    uint32_t hl = ah * bl;
-    uint32_t hh = ah * bh;
-
-    uint32_t mid = lh + hl;
-
-    uint32_t carry = ((ll >> 16) + (mid & 0xFFFFU)) >> 16;
-    return hh + (mid >> 16) + carry;
+    return ((a >> 8) * (b >> 8)) >> 8;
 #endif
 }
 
@@ -106,13 +89,8 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    uint32_t ua = (uint32_t)a;
-    uint32_t ub = (uint32_t)b;
-    uint32_t hi = umul32_hi(ua, ub);
-    if ((a ^ b) < 0) {
-        hi = ~hi + 1;
-    }
-    return (int32_t)hi;
+    int32_t hi = (a >> 8) * (b >> 8);
+    return hi >> 7;
 #endif
 }
 
@@ -1073,8 +1051,8 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
     return 0;
 }
 
-uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_freq_hz, uint32_t phase_inc, int16_t amp, int32_t samples, int16_t *ampl_buf,
-                 int32_t update_interval) {
+HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_freq_hz, uint32_t phase_inc, int16_t amp, int32_t samples, int16_t *ampl_buf,
+                         int32_t update_interval) {
     if (!ctx || !ampl_buf)
         return 0;
 
