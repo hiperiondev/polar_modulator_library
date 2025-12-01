@@ -715,28 +715,25 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
         sr = SAMPLE_RATE_16KHZ;
     }
 
+    // Clamp sample rate index to valid range
     if (sr_idx < 0 || sr_idx >= NUM_SR)
         sr_idx = 1;
 
-    // Early return if sample rate index hasn't changed
-    if (ctx->hot.sr_idx == sr_idx) {
-        ctx->hot.sample_rate = sr;
-        return;
-    }
+    // Defensive check: never allow unknown sample rates (enforced by setting sr_idx below)
+    ctx->hot.sample_rate = sr;
+    ctx->hot.sr_idx = sr_idx;
 
-    // Scale Hilbert delay line contents to preserve state during transition
-    // This prevents audible glitches when changing sample rates dynamically
-    if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
+    // Only scale Hilbert contents if changing sample rate
+    if (ctx->hot.sr_idx != sr_idx && ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
         int32_t old_scale = sr_sqrt_scale[ctx->hot.sr_idx];
         int32_t new_scale = sr_sqrt_scale[sr_idx];
         for (int i = 0; i < N_TAPS; i++) {
-            // Scale each tap proportionally to sample rate change
+            // Only use 32bit integer arithmetic
             ctx->hilbert_delay_line[i] = (ctx->hilbert_delay_line[i] * new_scale) / old_scale;
         }
     }
 
-    // Zero only frequency-dependent biquad filter delays
-    // Filter coefficients change with sample rate, so delay contents become invalid
+    // Always zero filter delay buffers on sample rate change to avoid invalid delay contents
     memset(ctx->delay_hp500, 0, sizeof(ctx->delay_hp500));
     memset(ctx->delay_hp1000, 0, sizeof(ctx->delay_hp1000));
     memset(ctx->delay_hp2000, 0, sizeof(ctx->delay_hp2000));
@@ -750,49 +747,46 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     memset(ctx->delay_lp_x, 0, sizeof(ctx->delay_lp_x));
     memset(ctx->delay_lp_y, 0, sizeof(ctx->delay_lp_y));
 
-    // Preserve Hilbert write index for seamless delay line continuation
-    // Reset phase tracking state since phase increment per sample changes with SR
-    ctx->hot.last_angle = 0;
-    ctx->hot.prev_diff = 0;
-    ctx->hot.sample_rate = sr;
-    ctx->hot.sr_idx = sr_idx;
-    ctx->hot.energy_q16 = 0;
+    // Set Hilbert tap count and pointer for current sample rate (only for valid indices)
+    ctx->hilbert_taps = (sr_idx == 2) ? 16 : hilbert_taps_per_sr[sr_idx];
+    ctx->hilbert_k = (ctx->hilbert_taps - 1) / 2;
+    ctx->hilbert_q15 = hilbert_q15_per_sr[(sr_idx < NUM_SR) ? sr_idx : 1];
 
+    // Set phase table reciprocal for direct (32bit-only) phase increment calculation
+    ctx->freq_to_phase = freq_to_phase_q32[sr_idx];
+
+    static const uint32_t phase_inc_recip_tab[NUM_SR] = { 0x00020000U, 0x00010000U, 0x00005555U };
+    ctx->phase_inc_recip = phase_inc_recip_tab[sr_idx];
+
+    // Defensive: always update other AGC and tone parameters for current SR
     ctx->agc_period = agc_period_tab[sr_idx];
     if (ctx->agc_period > 400)
         ctx->agc_period = 400;
 
-    // Scale thresholds by sr_sqrt_scale[sr_idx] / 512 (512 is 16-kHz reference)
-    const int32_t base_high = (INT16_MAX * 90) / 100; // ~29490
+    const int32_t base_high = (INT16_MAX * 90) / 100;
     ctx->high_vol_thres = (base_high * (int32_t)sr_sqrt_scale[sr_idx]) / 512;
     if (ctx->high_vol_thres < 4096)
         ctx->high_vol_thres = 4096;
     ctx->low_vol_thres = ctx->high_vol_thres >> 1;
-    ctx->no_vol_thres = NO_VOL_THRES; // fixed near-silence
+    ctx->no_vol_thres = NO_VOL_THRES;
 
     ctx->fm_dev_scales[0] = 132;
     ctx->fm_dev_scales[1] = 264;
     ctx->fm_dev_scales[2] = 3960;
 
-    ctx->hilbert_taps = (sr_idx == 2) ? 16 : hilbert_taps_per_sr[sr_idx];
-    ctx->hilbert_k = (ctx->hilbert_taps - 1) / 2;
-
-    ctx->freq_to_phase = freq_to_phase_q32[sr_idx];
-
-    static const uint32_t phase_inc_recip_tab[3] = { 0x00020000U, 0x00010000U, 0x00005555U };
-    ctx->phase_inc_recip = phase_inc_recip_tab[sr_idx];
-
+    ctx->hot.last_angle = 0;
+    ctx->hot.prev_diff = 0;
+    ctx->hot.energy_q16 = 0;
     ctx->agc_step = 3 + sr_idx;
     ctx->agc_max = 32768;
     ctx->agc_min = 64;
 
-    static const uint32_t tone_step_recip[3] = { 0x00020000U, 0x00010000U, 0x00005555U };
+    static const uint32_t tone_step_recip[NUM_SR] = { 0x00020000U, 0x00010000U, 0x00005555U };
     ctx->tone_step = ((tone_step_recip[sr_idx] * 1000U) >> 0);
 
     ctx->tone_period = 0;
     ctx->tone_phase = 0;
     ctx->tone_sub_div = 1;
-
     ctx->sr_recip_q16 = sr_recip_q16[sr_idx];
 }
 
