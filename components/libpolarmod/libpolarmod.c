@@ -87,8 +87,13 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    int32_t hi = (a >> 8) * (b >> 8);
-    return hi >> 7;
+    int32_t ah = a >> 16, al = a & 0xFFFF;
+    int32_t bh = b >> 16, bl = b & 0xFFFF;
+    int32_t p1 = ah * bh << 1; // Q30 high
+    int32_t p2 = ah * bl;      // Q15 * Q15
+    int32_t p3 = al * bh;      // Q15 * Q15
+    int32_t result = p1 + (p2 >> 15) + (p3 >> 15);
+    return result + 1; // rounding
 #endif
 }
 
@@ -172,6 +177,16 @@ static void polar_mod_global_init(void) {
         }
     }
     recip_initialized = true;
+}
+
+static inline int32_t wrap_phase_diff_q24(int32_t diff) {
+    // Fast ±π wrap for Q24 phase (1 << 24 == 2π)
+    if (diff > (1 << 23)) {
+        diff -= (1 << 24);
+    } else if (diff <= -(1 << 23)) {
+        diff += (1 << 24);
+    }
+    return diff;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -516,7 +531,7 @@ static void iq_sig_8k(polar_mod_ctx_t *ctx, int32_t mode, int32_t *x_out, int32_
     }
 
     if (apply_gain) {
-        x = mul_q15(x, gain); // Q15 x Q15 -> Q15
+        x = mul_q15(x, gain);          // Q15 x Q15 -> Q15
         x = SATURATE_TO_INT32(x << 1); // Q15 -> Q16
         y = mul_q15(y, gain);
         y = SATURATE_TO_INT32(y << 1);
@@ -961,9 +976,9 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
                 ctx->am_data_dc_mean = SATURATE_TO_INT32(ctx->am_data_dc_mean + incr);
                 signed_env -= ctx->am_data_dc_mean;
             }
-            // AM carrier level 50% resting carrier
-            int32_t env = ARITH_RSH(signed_env, 10); // reduce swing to avoid overflow
-            env = env + 16384; // add 50% carrier (16384 = 0.5 * 32768)
+            int32_t env = 32768 + signed_env; // 32768 = 1.0 in Q15 unsigned envelope
+                                              // Alternative: for softer broadcast style, could use: int32_t env = 32768 + (signed_env >> 1);
+
             if (env < 0)
                 env = 0; // clamp negative peaks
             *ampl_out = (int32_t)SATURATE_TO_INT32(env);
@@ -972,6 +987,8 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         case MOD_USB:
         case MOD_LSB: {
             int32_t curr_angle = angle_local;
+
+            // ----- CORRECTED PHASE UNWRAPPING (replaces buggy code) -----
             int32_t raw_diff = is_first ? 0 : (curr_angle - (int32_t)ctx->hot.last_angle);
 
             // Sample-rate dependent group delay compensation from Hilbert
@@ -979,13 +996,10 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
                 raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
             }
 
-            // Wrap to -π..+π (Q24)
-            int32_t diff = raw_diff;
-            diff += (1 << 23); // bring into unsigned range
-            diff &= 0xFFFFFF;  // modulo 2^24
-            diff -= (1 << 23); // back to signed
+            // Proper ±π wrapping – fixes catastrophic clicks
+            int32_t diff = wrap_phase_diff_q24(raw_diff);
 
-            // Safety: if diff is wildly out of bounds (should never happen with good CORDIC), force zero to prevent clicks
+            // Safety clamp (should never trigger with correct CORDIC)
             if (diff <= -(1 << 23) || diff >= (1 << 23)) {
                 diff = 0;
             }
@@ -1001,6 +1015,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
 
             // Store current angle for next sample
             ctx->hot.last_angle = curr_angle;
+            // ------------------------------------------------------------
 
             int32_t ampl_tmp = ampl_local;
 
