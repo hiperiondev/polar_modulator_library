@@ -71,7 +71,7 @@
 #define POLAR_MOD_VERSION_MINOR 1
 
 /** @brief Patch version - bug fixes and minor improvements */
-#define POLAR_MOD_VERSION_PATCH 1
+#define POLAR_MOD_VERSION_PATCH 2
 
 /* ============================================================================================= */
 /* Status and control flags                                                                      */

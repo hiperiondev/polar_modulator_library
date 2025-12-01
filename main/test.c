@@ -32,10 +32,10 @@
 #include <string.h>
 #include <time.h>
 
+#include "iq_hello_120samples.h"
 #include <libpolarmod.h>
 #include <macros.h>
 #include <tables.h>
-#include "iq_hello_120samples.h"
 
 #if defined(__XTENSA__)
 #include "esp_task_wdt.h"
@@ -113,7 +113,7 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
     __asm__ __volatile__("muluh %0, %1, %2" : "=a"(result) : "a"(a), "a"(b));
     return result;
 #else
-    /* Karatsuba fallback – pure 32-bit */
+    // Karatsuba fallback – pure 32-bit
     uint32_t al = a & 0xFFFFu, ah = a >> 16;
     uint32_t bl = b & 0xFFFFu, bh = b >> 16;
     uint32_t ll = al * bl;
@@ -153,7 +153,7 @@ static void test_cordic_vector(int32_t x, int32_t y) {
 
     // Tolerances:
     // - magnitude: allow small absolute error (<= 2 units)
-    //- angle: allow +-50 LSB in Q24 (increased from 2 to account for integer precision in small vectors) -> ~0.3 degrees
+    // - angle: allow +-50 LSB in Q24 (increased from 2 to account for integer precision in small vectors) -> ~0.3 degrees
     printf("       CORDIC test: x=%d y=%d -> mag_q=%d ang_q=%d (ref=%d)\n", (int)x, (int)y, (int)mag_q, (int)ang_q, (int)ang_ref_q24);
     CHECK_CLOSE(mag_q, mag_ref_i, 2, "cordic_mag", true);
     CHECK_CLOSE(ang_q, ang_ref_q24, 50, "cordic_ang", true);
@@ -267,29 +267,29 @@ static void test_mic_agc_fast() {
     int32_t gain = mic_agc_fast(&ctx, 0, 0);
     CHECK_CLOSE(gain, 256, 0, "agc_initial", true);
 
-    /* ---- trigger sample-rate aware thresholds ---- */
+    // trigger sample-rate aware thresholds
     ctx.hot.sample_rate = SAMPLE_RATE_16KHZ;
     polar_mod_set_sr(&ctx, ctx.hot.sample_rate);
 
-    /* Simulate high volume peaks to trigger down */
+    // Simulate high volume peaks to trigger down
     ctx.hot.n = 399;               // near update
     ctx.cnt_high_volume_peaks = 4; // >3
     gain = mic_agc_fast(&ctx, ctx.high_vol_thres + 1, PTT_ACTIVE);
     CHECK(gain < 256, "agc decreases on high volume peaks", true); // should decrease
 
-    /* Simulate low volume to trigger up */
+    // Simulate low volume to trigger up
     ctx.hot.n = 399;
     ctx.cnt_low_volume_event = 21; // >20
     gain = mic_agc_fast(&ctx, ctx.low_vol_thres - 1, PTT_ACTIVE);
     CHECK(gain > 256, "agc increases on low volume", true); // should increase
 
-    /* Simulate no volume */
+    // Simulate no volume
     ctx.hot.n = 399;
     ctx.cnt_no_volume_event = 6; // >5
     gain = mic_agc_fast(&ctx, ctx.no_vol_thres - 1, PTT_ACTIVE);
     CHECK(gain > 256, "agc increases on no volume", true); // gain up for low
 
-    /* Check min/max bounds */
+    // Check min/max bounds
     ctx.hot.gain_value = 63; // below min
     gain = mic_agc_fast(&ctx, 0, PTT_ACTIVE);
     CHECK_EQ(gain, 64, "agc clamps to min gain", true); // clamped min
@@ -400,19 +400,19 @@ static void test_filter_2pol_lowpass_3000hz_bessel(polar_mod_ctx_t *ctx) {
     out = filter_2pol_lowpass_3000hz_bessel(0, delay);
     CHECK_EQ(out, 0, "filter_2pol_lowpass_3000hz_bessel(0) == 0", true);
 
-    /* Impulse response test (loose tol for var SR coeffs) */
+    // Impulse response test (loose tol for var SR coeffs)
     out = filter_2pol_lowpass_3000hz_bessel(1000, delay);
     CHECK_CLOSE(out, 0, 1000, "lp_3000_2pol_bessel_impulse1", true);
     out = filter_2pol_lowpass_3000hz_bessel(0, delay);
     CHECK_CLOSE(out, 976, 600, "lp_3000_2pol_bessel_impulse2", true);
 
-    /* DC gain test (steady state after 20 steps) */
+    // DC gain test (steady state after 20 steps)
     memset(delay, 0, sizeof(delay));
     for (int32_t k = 0; k < 20; ++k)
         out = filter_2pol_lowpass_3000hz_bessel(1000, delay);
     CHECK_CLOSE(out, 3684, 200, "lp_3000_2pol_bessel_dc", true);
 
-    /* 8 kHz tail-decay check (1 % of peak after 20 zeros) */
+    // 8 kHz tail-decay check (1 % of peak after 20 zeros)
     if (ctx->hot.sample_rate == SAMPLE_RATE_8KHZ) {
         memset(delay, 0, sizeof(delay));
         out = filter_2pol_lowpass_3000hz_bessel(1000, delay);
@@ -427,13 +427,13 @@ static void test_filter_4pol_lowpass_3000hz_bessel(polar_mod_ctx_t *ctx) {
     int32_t out = filter_4pol_lowpass_3000hz_bessel(0, delay);
     CHECK_EQ(out, 0, "filter_4pol_lowpass_3000hz_bessel(0) == 0", true);
 
-    /* Impulse */
+    // Impulse
     out = filter_4pol_lowpass_3000hz_bessel(1000, delay);
     CHECK_CLOSE(out, 31, 200, "lp_3000_4pol_bessel_impulse1", true);
     out = filter_4pol_lowpass_3000hz_bessel(0, delay);
     CHECK_CLOSE(out, 740, 300, "lp_3000_4pol_bessel_impulse2", true);
 
-    /* DC */
+    // DC
     out = filter_4pol_lowpass_3000hz_bessel(1000, delay);
     CHECK_CLOSE(out, 2018, 300, "lp_3000_4pol_bessel_dc", true);
 }
@@ -448,7 +448,7 @@ static void test_filter_4pol_lowpass_3000hz(polar_mod_ctx_t *ctx) {
     out = filter_4pol_lowpass_3000hz(0, ctx->delay_lp_adc);
     CHECK_CLOSE(out, 903, 200, "lp_3000_4pol_impulse2", true);
 
-    /* DC */
+    // DC
     out = filter_4pol_lowpass_3000hz(1000, ctx->delay_lp_adc);
     CHECK_CLOSE(out, 2519, 500, "lp_3000_4pol_dc", true);
 }
@@ -652,8 +652,8 @@ static void test_hilbert(polar_mod_ctx_t *ctx) {
 }
 
 static void test_dss_mod(polar_mod_ctx_t *ctx) {
-    /* Ensure context is properly initialized first */
-    polar_mod_init(ctx); /* make sure freq_to_phase is valid */
+    // Ensure context is properly initialized first
+    polar_mod_init(ctx);
 
     const int32_t samples = 1024;
     int16_t ampl_buf[samples];
@@ -668,41 +668,32 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
     mod.special_modulation = SPECIAL_MODULATION_NORMAL;
     mod.polar_status = 0;
 
-    /* ---- 1. compute phase_inc without 64-bit divide ---------------
-       base_freq_hz = 1 000 000 Hz
-       We want:  phase_inc = (base_freq_hz << 32) / sample_rate
-       sample_rate is 8 000, 16 000 or 48 000.
-       Rewrite as:  phase_inc = base_freq_hz * ((1<<32)/sample_rate)
-       The expression (1<<32)/sr is exactly the constant table
-       ctx->freq_to_phase that polar_mod_set_sr() already prepared.
-    ----------------------------------------------------------------*/
     uint32_t base_freq_hz = 1000000U;
 
-    /* Ensure context sample rate is set before using freq_to_phase */
     if (ctx->hot.sample_rate == 0)
         ctx->hot.sample_rate = SAMPLE_RATE_16KHZ;
     polar_mod_set_sr(ctx, ctx->hot.sample_rate);
 
-    /* ADDED: Safety check to ensure freq_to_phase is not zero */
+    // Safety check to ensure freq_to_phase is not zero
     if (ctx->freq_to_phase == 0) {
         printf("ERROR: freq_to_phase is zero - context not properly initialized\n");
         return;
     }
 
-    /* clip to 32-bit range to avoid overflow in the multiply below */
+    // clip to 32-bit range to avoid overflow in the multiply below
     if (base_freq_hz > 0xFFFFFFFFU / ctx->freq_to_phase)
         base_freq_hz = 0xFFFFFFFFU / ctx->freq_to_phase;
 
     uint32_t phase_inc = umul32_hi(base_freq_hz, ctx->freq_to_phase);
 
-    /* ---- 2. NULL safety checks -----------------------------------*/
+    // NULL safety checks
     uint32_t ret_null = dss_mod(NULL, mod, base_freq_hz, phase_inc, 0, 0, NULL, 1);
     CHECK_EQ(ret_null, 0, "dss_mod NULL ctx -> 0", true);
 
     uint32_t ret_nullbuf = dss_mod(ctx, mod, base_freq_hz, phase_inc, 0, 0, NULL, 1);
     CHECK_EQ(ret_nullbuf, 0, "dss_mod NULL buffer -> 0", true);
 
-    /* ---- 3. amp == 0  ->  output must be zero --------------------*/
+    // amp == 0  ->  output must be zero
     for (int i = 0; i < samples; ++i)
         ampl_buf[i] = (int16_t)0x7FFF;
 
@@ -717,7 +708,7 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
         }
     CHECK(all_zero, "amp==0: buffer all zeros", true);
 
-    /* ---- 4. AM modulation ---------------------------------------*/
+    // AM modulation
     mod.modulation_mode = MOD_AM;
     const int16_t amp = 12000;
     memset(ampl_buf, 0, sizeof(ampl_buf));
@@ -737,7 +728,7 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
     CHECK(avg_abs > 1000, "MOD_AM: average amplitude > 1000", true);
     CHECK(max_abs > 2000, "MOD_AM: peak amplitude   > 2000", true);
 
-    /* ---- 5. CW (constant envelope) ------------------------------*/
+    // CW (constant envelope)
     mod.modulation_mode = MOD_CW;
     memset(ampl_buf, 0, sizeof(ampl_buf));
 
@@ -749,13 +740,13 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
         sum += ampl_buf[i];
     int32_t mean = sum / samples;
 
-    int32_t mad = 0; /* mean absolute deviation */
+    int32_t mad = 0; // mean absolute deviation
     for (int i = 0; i < samples; ++i)
         mad += (ampl_buf[i] > mean) ? (ampl_buf[i] - mean) : (mean - ampl_buf[i]);
     int32_t mad_avg = mad / samples;
     CHECK(mad_avg < 2000, "MOD_CW: amplitude stable (low deviation)", true);
 
-    /* ---- 6. FM modulation ---------------------------------------*/
+    // FM modulation
     mod.modulation_mode = MOD_FM;
     memset(ampl_buf, 0, sizeof(ampl_buf));
 
@@ -770,7 +761,7 @@ static void test_dss_mod(polar_mod_ctx_t *ctx) {
         }
     CHECK(any_nonzero, "MOD_FM: buffer contains data", true);
 
-    /* ---- 7. update_interval = 1 --------------------------------*/
+    // update_interval = 1
     mod.modulation_mode = MOD_USB;
     memset(ampl_buf, 0, sizeof(ampl_buf));
 
@@ -794,32 +785,31 @@ static void test_polar_modulator(void) {
 
     int32_t ampl_out, phase_diff_out;
 
-    /* ---- zero input ------------------------------------------------ */
+    // zero input
     polar_modulator(&ctx, mod, 0, &ampl_out, &phase_diff_out);
     CHECK_CLOSE(ampl_out, 0, 10, "mod_am_pm_zero_ampl", true);
     CHECK_CLOSE(phase_diff_out, 0, 10, "mod_am_pm_zero_phase", true);
 
-    /* ---- 500 Hz sine, 16 kHz sample rate --------------------------- */
-    /* 500 Hz => 32 samples per period.  64 samples = 2 periods        */
-    /* Amplitude = 30000  (well below soft-limiter threshold)          */
-    /* Golden average amplitude obtained with identical fixed-point    */
-    /* implementation: 26443                                           */
-    enum { F = 500, N = 64 }; /* 2 periods */
+    // 500 Hz sine, 16 kHz sample rate
+    // 500 Hz => 32 samples per period.  64 samples = 2 periods
+    // Amplitude = 30000  (well below soft-limiter threshold)
+    // Golden average amplitude obtained with identical fixed-point
+    // implementation: 26443
+    enum { F = 500, N = 64 }; // 2 periods
     enum { AMPL_EXPECTED = 26443 };
 
     int32_t sum_ampl = 0;
 
-    /* 32-bit phase generator:  32 sine entries = 1 period            */
-    /* phase_step = (1<<16)*F / FS  (0x00010000 * 500 / 16000)        */
-    /*            = 0x00001000   (Q16)                                 */
-    /* We add this Q16 value to a Q16 accumulator and keep the high    */
-    /* 5 bits (mask 31) as the table index.                            */
-    const int32_t phase_step_q16 = 0x00001000; /* (1<<16)*500/16000 */
-    int32_t phase_acc_q16 = 0;                 /* Q16, wraps naturally */
+    // 32-bit phase generator:  32 sine entries = 1 period
+    // phase_step = (1<<16)*F / FS  (0x00010000 * 500 / 16000) = 0x00001000   (Q16)
+    // We add this Q16 value to a Q16 accumulator and keep the high
+    // 5 bits (mask 31) as the table index.
+    const int32_t phase_step_q16 = 0x00001000; // (1<<16)*500/16000
+    int32_t phase_acc_q16 = 0;                 // Q16, wraps naturally
 
     for (int32_t n = 0; n < N; ++n) {
-        int32_t idx = (phase_acc_q16 >> 11) & 31;       /* 5-bit index  */
-        int32_t data = (sine_table[idx] * 30000) >> 15; /* Q15->Q0  */
+        int32_t idx = (phase_acc_q16 >> 11) & 31;       // 5-bit index
+        int32_t data = (sine_table[idx] * 30000) >> 15; // Q15->Q0
 
         polar_modulator(&ctx, mod, data, &ampl_out, &phase_diff_out);
 
@@ -828,7 +818,7 @@ static void test_polar_modulator(void) {
         CHECK(phase_diff_out > -(1 << 23) && phase_diff_out < (1 << 23), "phase_diff_out in range", false);
 
         sum_ampl += ampl_out;
-        phase_acc_q16 += phase_step_q16; /* 32-bit add, wraps */
+        phase_acc_q16 += phase_step_q16;
     }
 
     int32_t avg_ampl = sum_ampl / N;
@@ -853,7 +843,7 @@ static void test_polar_modulator_multi_sr(polar_mod_ctx_t *ctx) {
 
         int32_t ampl_out, phase_diff_out;
 
-        /* ---------- per-SR golden levels (Q14 biquad) ---------- */
+        // per-SR golden levels (Q14 biquad)
         int32_t amp_expected_avg;
         switch (srs[i]) {
             case 8000:
@@ -866,19 +856,18 @@ static void test_polar_modulator_multi_sr(polar_mod_ctx_t *ctx) {
                 amp_expected_avg = 22746;
                 break;
         }
-        /* ------------------------------------------------------- */
 
         for (uint32_t f = 500; f <= 3000; f += (f < 1000 ? 500 : 500)) {
             if (f > 3400 - 500)
-                break; /* stay inside voice band */
+                break; // stay inside voice band
             printf("       --- Signal test: %d Hz\n", (int)f);
 
-            /* Integer-only sine generation using Q15 sine table */
+            // Integer-only sine generation using Q15 sine table
             const int32_t fs = srs[i];
-            const int32_t samples = (fs * 2 + (f >> 1)) / f; /* 2 periods, rounded */
+            const int32_t samples = (fs * 2 + (f >> 1)) / f; // 2 periods, rounded
             int32_t sum_ampl = 0;
 
-            /* Q16 phase step: (f << 16) / fs */
+            // Q16 phase step: (f << 16) / fs
             int32_t phase_step = ((f << 16) + (fs >> 1)) / fs;
             int32_t phase_acc = 0;
 
@@ -904,7 +893,7 @@ static void test_dss_mod_multi_sr(polar_mod_ctx_t *ctx) {
     for (int32_t i = 0; i < 3; i++) {
         printf("       Sample rate: %" PRId32 "d Hz\n", srs[i]);
         ctx->hot.sample_rate = srs[i];
-        /* Set SR index and precomputed reciprocal for 32-bit phase calc */
+        // Set SR index and precomputed reciprocal for 32-bit phase calc
         polar_mod_set_sr(ctx, srs[i]);
         const int32_t samples = 1024;
         int16_t ampl_buf[samples];
@@ -980,7 +969,7 @@ static void test_stability(void) {
 
     int32_t ampl_out, phase_out;
 
-    /* Single-sample CW (silence input) */
+    // Single-sample CW (silence input)
     const int32_t silence = 0;
     int32_t rc = polar_modulator(&ctx, mod, silence, &ampl_out, &phase_out);
 
@@ -988,7 +977,7 @@ static void test_stability(void) {
     CHECK_CLOSE(ampl_out, 65535, 10, "stability: constant full-scale amplitude in pure CW (silence input)", true);
     CHECK_EQ(phase_out, 0, "stability: phase = 0 in pure CW", true);
 
-    /* Bulk dss_mod() – constant carrier test */
+    // Bulk dss_mod() – constant carrier test
     int16_t ampl_buf[256];
     const uint32_t base_freq = 1000000; // arbitrary 1 MHz carrier
 
@@ -1014,7 +1003,7 @@ static void test_boundary() {
     memset(&ctx, 0, sizeof(ctx));
     polar_mod_init(&ctx);
     ctx.hot.sample_rate = SAMPLE_RATE_16KHZ;
-    /*  Explicitly set SR index and precomputed reciprocal for 32-bit phase calc */
+    // Explicitly set SR index and precomputed reciprocal for 32-bit phase calc
     polar_mod_set_sr(&ctx, SAMPLE_RATE_16KHZ);
 
     modulation_t mod = { MOD_USB, FILTER_HP_NONE, FILTER_LP_NONE, FILTER_PB_NONE, FILTER_POST_LP_NONE, AGC_NONE, SPECIAL_MODULATION_NORMAL, PTT_ACTIVE };
@@ -1042,7 +1031,7 @@ static void test_boundary() {
     uint32_t base_freq_hz = 1000;
     uint32_t phase_inc = umul32_hi(base_freq_hz, ctx.freq_to_phase);
 
-    /* fully initialize modulation_t before any dss_mod call */
+    // fully initialize modulation_t before any dss_mod call
     modulation_t mod_dss = { 0 };
     mod_dss.modulation_mode = MOD_CW;
     mod_dss.filter_pre_hp = FILTER_HP_NONE;
@@ -1099,7 +1088,7 @@ static void test_iq_audio_input(void) {
     };
     const int32_t N = sizeof(test_iq) / sizeof(test_iq[0]);
 
-    /* SR-dependent phase compensation from libpolarmod.c */
+    // SR-dependent phase compensation from libpolarmod.c
     const int32_t hilbert_comp_q24[3] = { 1000, 0, -1000 }; /* 8/16/48 kHz */
 
     int32_t sr_list[3] = { SAMPLE_RATE_8KHZ, SAMPLE_RATE_16KHZ, SAMPLE_RATE_48KHZ };
@@ -1128,7 +1117,7 @@ static void test_iq_audio_input(void) {
             int32_t I_raw = test_iq[k][0];
             int32_t Q_raw = test_iq[k][1];
 
-            /* Pack exactly as library expects (sign-extended 16-bit halves) */
+            // Pack exactly as library expects (sign-extended 16-bit halves)
             int32_t iq_sample = ((int32_t)(int16_t)I_raw << 16) | ((int32_t)(int16_t)Q_raw & 0xFFFF);
 
             int32_t ampl_out, phase_out;
@@ -1141,17 +1130,17 @@ static void test_iq_audio_input(void) {
                 continue;
             }
 
-            /* Reference raw CORDIC (includes ~1.64676 gain) */
+            // Reference raw CORDIC (includes ~1.64676 gain)
             int32_t ampl_ref_raw, phase_ref;
             cordic(I_raw, Q_raw, &ampl_ref_raw, &phase_ref);
 
-            /* Library applies ×2 gain in SSB modes (even with direct I/Q) */
+            // Library applies ×2 gain in SSB modes (even with direct I/Q)
             int32_t ampl_ref = ampl_ref_raw * 2;
 
-            /* Allow small rounding error (observed values are 36635 vs 36634, etc.) */
+            // Allow small rounding error (observed values are 36635 vs 36634, etc.)
             CHECK_CLOSE(ampl_out, ampl_ref, 32, "iq_audio amplitude match (raw CORDIC ×2)", true);
 
-            /* Phase: first non-zero vector = absolute angle minus SR compensation */
+            // Phase: first non-zero vector = absolute angle minus SR compensation
             if (ctx.first_call) {
                 int32_t compensation = hilbert_comp_q24[ctx.hot.sr_idx];
                 int32_t expected_phase = phase_ref - compensation;
@@ -1207,7 +1196,6 @@ static void test_iq_real_speech(void) {
         CHECK(ampl_out >= 0 && ampl_out <= 65535, "iq_real_speech: amplitude in 0..65535", false);
         CHECK(phase_diff_out >= -(1 << 23) && phase_diff_out < (1 << 23), "iq_real_speech: phase diff in -π..+π (Q24)", false);
 
-        /* statistics */
         if (ampl_out > max_ampl)
             max_ampl = ampl_out;
         if (ampl_out < min_ampl)
@@ -1225,7 +1213,7 @@ static void test_iq_real_speech(void) {
         last_phase = phase_diff_out;
     }
 
-    /* Real speech easily contains 700-900 Hz components → allow up to approximately 0.35 rad */
+    // Real speech easily contains 700-900 Hz components → allow up to approximately 0.35 rad
     const int32_t MAX_REASONABLE_JUMP_Q24 = 580000; /* approximately 0.35 rad @ 16 kHz */
 
     CHECK_CLOSE(max_ampl, 65535, 65535 * 0.40, "iq_real_speech: peak amplitude reasonable (>=60%)", true);

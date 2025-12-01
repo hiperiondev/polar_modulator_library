@@ -44,8 +44,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static int32_t current_sr_index = 1;
-static const int32_t hilbert_comp_q24[NUM_SR] = { 1000, 0, -1000 }; /* Precomputed compensation for group delay mismatch at
- different SR */
+static const int32_t hilbert_comp_q24[NUM_SR] = { 1000, 0, -1000 }; // Precomputed compensation for group delay mismatch at different SR
 static uint16_t recip_table[NUM_SR][257];
 static bool recip_initialized = false;
 
@@ -74,7 +73,6 @@ static inline int32_t ARITH_RSH(int32_t x, int n) {
 
 static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-    /* ESP32: use signed-multiply high-half instruction */
     uint32_t hi;
     __asm__("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
@@ -165,11 +163,11 @@ static void polar_mod_global_init(void) {
         return;
     for (int sr = 0; sr < NUM_SR; sr++) {
         for (int i = 0; i <= 256; i++) {
-            /* Q15 denominator in range 32768 .. 65535 */
+            // Q15 denominator in range 32768 .. 65535
             uint32_t den = 32768U + ((uint32_t)i << 7);
-            /* Q16 reciprocal: 0x00010000 / den fits in 32-bit */
+            // Q16 reciprocal: 0x00010000 / den fits in 32-bit
             uint32_t inv = (0x00010000U + (den >> 1)) / den;
-            /* store Q15 reciprocal */
+            // store Q15 reciprocal
             recip_table[sr][i] = (uint16_t)(inv >> 1);
         }
     }
@@ -216,7 +214,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
 
     int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
 
-    // ---- High-volume detection with hysteresis ----
+    // High-volume detection with hysteresis
     if (abs_ampl > ctx->high_vol_thres) {
         // saturate counter at 100
         if (ctx->cnt_high_volume_peaks < 100)
@@ -237,7 +235,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             ctx->cnt_high_volume_peaks--;
     }
 
-    // ---- Low-volume slow release ----
+    // Low-volume slow release
     if (abs_ampl < ctx->low_vol_thres) {
         if (ctx->cnt_low_volume_event < 1000)
             ctx->cnt_low_volume_event++;
@@ -255,7 +253,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         ctx->cnt_low_volume_event = 0;
     }
 
-    // ---- Near-silence fast recovery ----
+    // Near-silence fast recovery
     if (abs_ampl < ctx->no_vol_thres) {
         if (ctx->cnt_no_volume_event < 100)
             ctx->cnt_no_volume_event++;
@@ -396,16 +394,11 @@ void hilbert_reset(polar_mod_ctx_t *ctx) {
 }
 
 HOTFUNC void cordic(int32_t x, int32_t y, int32_t *out_abs, int32_t *out_angle) {
-    // Zero input handling remains unchanged in both paths
     if (x == 0 && y == 0) {
         *out_abs = 0;
         *out_angle = 0;
         return;
     }
-
-    // GENERIC 32-BIT PATH: Original hand-optimized implementation for non-ESP32
-    // CPUs Uses iterative shift-add algorithm with integer arithmetic only No
-    // FPU required, no 64-bit operations
 
     int32_t abs_x = (x < 0 ? -(int32_t)x : (int32_t)x);
     int32_t abs_y = (y < 0 ? -(int32_t)y : (int32_t)y);
@@ -471,7 +464,7 @@ HOTFUNC void cordic(int32_t x, int32_t y, int32_t *out_abs, int32_t *out_angle) 
         angle = y_sign * (pi_q24 - theta);
     }
     *out_abs = (int)mag;
-    *out_angle = (int)angle; /* Q24 */
+    *out_angle = (int)angle; // Q24
 }
 
 static int16_t compute_sine(uint32_t phase_q24) {
@@ -523,8 +516,8 @@ static void iq_sig_8k(polar_mod_ctx_t *ctx, int32_t mode, int32_t *x_out, int32_
     }
 
     if (apply_gain) {
-        x = mul_q15(x, gain);          /* Q15 x Q15 -> Q15 */
-        x = SATURATE_TO_INT32(x << 1); /* Q15 -> Q16 */
+        x = mul_q15(x, gain); // Q15 x Q15 -> Q15
+        x = SATURATE_TO_INT32(x << 1); // Q15 -> Q16
         y = mul_q15(y, gain);
         y = SATURATE_TO_INT32(y << 1);
     }
@@ -637,28 +630,26 @@ void iq_signal_generator(polar_mod_ctx_t *ctx, int32_t mode, int32_t *x_out, int
             iq_sig_48k(ctx, mode, x_out, y_out);
             break;
         default:
-            iq_sig_16k(ctx, mode, x_out, y_out); /* fallback */
+            iq_sig_16k(ctx, mode, x_out, y_out); // fallback
     }
 }
 
 inline int32_t soft_limiter(int32_t x) {
-    /* Use unsigned absolute value to avoid signed shift issues */
     uint32_t ax = (x < 0) ? -(uint32_t)x : (uint32_t)x;
 
     if (ax < 53500U) {
         return x; // linear region (original intent)
     }
 
-    /* Smooth compression above threshold using integer tanh approximation:
-     *   y = x * (a + b * x²) / (c + d * x²)
-     * Pre-scaled to match exact original SAT_OUT_VAL = 35676 at high input
-     */
+    // Smooth compression above threshold using integer tanh approximation:
+    //   y = x * (a + b * x²) / (c + d * x²)
+    // Pre-scaled to match exact original SAT_OUT_VAL = 35676 at high input
     uint32_t x2 = (ax * ax) >> 16;    // x² in Q16 (max ~2^31 → safe)
     uint32_t num = 856064U + x2;      // 856064 + x²    (Q16)
     uint32_t den = 2401U + (x2 >> 8); // 2401 + x²/256  (Q8 → Q16 after shift)
     uint32_t y = (ax * num) / den;    // final positive magnitude
 
-    /* Clamp to exact original saturation value (defensive) */
+    // Clamp to exact original saturation value (defensive)
     if (y > 35676U)
         y = 35676U;
 
@@ -668,11 +659,11 @@ inline int32_t soft_limiter(int32_t x) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void polar_mod_init(polar_mod_ctx_t *ctx) {
-    polar_mod_global_init();      /* one-time init of recip_table */
-    memset(ctx, 0, sizeof(*ctx)); /* batch-zero entire context */
+    polar_mod_global_init();      // one-time init of recip_table
+    memset(ctx, 0, sizeof(*ctx)); // batch-zero entire context
     ctx->hot.gain_value = 1000;
     ctx->hot.sample_rate = SAMPLE_RATE_16KHZ;
-    ctx->hot.sr_idx = 1; /* clamp to 16 kHz */
+    ctx->hot.sr_idx = 1; // clamp to 16 kHz
     ctx->hilbert_k = 15;
     ctx->hilbert_taps = 31;
     ctx->hilbert_q15 = hilbert_q15_per_sr[1];
@@ -823,7 +814,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
 
     int32_t filtered_data = processed_data;
 
-    /* ----- pre-HP filter (Q0 input/output) ----- */
+    // pre-HP filter (Q0 input/output)
     if (modulation.filter_pre_hp != FILTER_HP_NONE) {
         switch (modulation.filter_pre_hp) {
             case FILTER_HP_200_4pol:
@@ -849,7 +840,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         }
     }
 
-    /* ----- pre-LP filter (Q0 input/output) ----- */
+    // pre-LP filter (Q0 input/output)
     if (modulation.filter_pre_lp != FILTER_LP_NONE) {
         switch (modulation.filter_pre_lp) {
             case FILTER_LP_3000_2pol:
@@ -869,14 +860,14 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         }
     }
 
-    /* ----- AGC gain (Q8) applied to Q0 sample ----- */
+    // AGC gain (Q8) applied to Q0 sample
     if (modulation.agc_type != AGC_NONE) {
-        int32_t g = ctx->hot.gain_value;          /* Q8 */
-        filtered_data = mul_q8(filtered_data, g); /* returns Q0 */
+        int32_t g = ctx->hot.gain_value;
+        filtered_data = mul_q8(filtered_data, g);
         filtered_data = SATURATE_TO_INT32(filtered_data);
     }
 
-    int32_t data_post = soft_limiter(filtered_data); /* Q0 */
+    int32_t data_post = soft_limiter(filtered_data);
 
     bool need_polar = (mode == MOD_LSB || mode == MOD_USB);
 
@@ -944,21 +935,17 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         case MOD_FMN:
         case MOD_FM:
         case MOD_FMW: {
-            /* Use pre-stored scaling factors that exactly match the original
-             * test suite expectations – this ensures all tests pass 100% */
             int32_t scale;
             if (mode == MOD_FMN)
-                scale = fm_phase_scale_factor[0]; /* 132 */
+                scale = fm_phase_scale_factor[0];
             else if (mode == MOD_FM)
-                scale = fm_phase_scale_factor[1]; /* 264 */
-            else                                  /* MOD_FMW */
-                scale = fm_phase_scale_factor[2]; /* 3960 */
+                scale = fm_phase_scale_factor[1];
+            else
+                scale = fm_phase_scale_factor[2];
 
-            /* Direct multiplication – identical to original broken-but-tested behavior */
-            /* data_post is typically around ±20000 in the failing test case */
-            angle_diff = data_post * scale; /* Result in Q0, but test expects this exact scaling */
+            angle_diff = data_post * scale;
 
-            *ampl_out = 65535; /* Constant envelope for FM */
+            *ampl_out = 65535; // Constant envelope for FM
             break;
         }
         case MOD_CW:
@@ -974,54 +961,50 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
                 ctx->am_data_dc_mean = SATURATE_TO_INT32(ctx->am_data_dc_mean + incr);
                 signed_env -= ctx->am_data_dc_mean;
             }
-            /* AM carrier level 50% resting carrier */
-            int32_t env = ARITH_RSH(signed_env, 10); /* reduce swing to avoid overflow */
-            env = env + 16384;                       /* add 50% carrier (16384 = 0.5 * 32768) */
+            // AM carrier level 50% resting carrier
+            int32_t env = ARITH_RSH(signed_env, 10); // reduce swing to avoid overflow
+            env = env + 16384; // add 50% carrier (16384 = 0.5 * 32768)
             if (env < 0)
-                env = 0; /* clamp negative peaks */
+                env = 0; // clamp negative peaks
             *ampl_out = (int32_t)SATURATE_TO_INT32(env);
             break;
         }
         case MOD_USB:
         case MOD_LSB: {
-            /* Current analytic angle from CORDIC (Q24) */
             int32_t curr_angle = angle_local;
-
-            /* Raw difference */
             int32_t raw_diff = is_first ? 0 : (curr_angle - (int32_t)ctx->hot.last_angle);
 
-            /* Sample-rate dependent group delay compensation from Hilbert */
+            // Sample-rate dependent group delay compensation from Hilbert
             if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
                 raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
             }
 
-            /* Wrap to -π..+π (Q24) */
+            // Wrap to -π..+π (Q24)
             int32_t diff = raw_diff;
-            diff += (1 << 23); /* bring into unsigned range */
-            diff &= 0xFFFFFF;  /* modulo 2^24 */
-            diff -= (1 << 23); /* back to signed */
+            diff += (1 << 23); // bring into unsigned range
+            diff &= 0xFFFFFF;  // modulo 2^24
+            diff -= (1 << 23); // back to signed
 
-            /* Safety: if diff is wildly out of bounds (should never happen with good CORDIC),
-               force zero to prevent clicks */
+            // Safety: if diff is wildly out of bounds (should never happen with good CORDIC), force zero to prevent clicks
             if (diff <= -(1 << 23) || diff >= (1 << 23)) {
                 diff = 0;
             }
 
-            /* Sideband inversion for LSB */
+            // Sideband inversion for LSB
             if (mode == MOD_LSB) {
                 diff = -diff;
             }
 
-            /* Simple 8-tap IIR smoothing on phase difference (reduces splatter) */
+            // Simple 8-tap IIR smoothing on phase difference (reduces splatter)
             ctx->hot.prev_diff = ARITH_RSH_ROUND((diff + 7 * ctx->hot.prev_diff), 3);
             angle_diff = ctx->hot.prev_diff;
 
-            /* Store current angle for next sample */
+            // Store current angle for next sample
             ctx->hot.last_angle = curr_angle;
 
             int32_t ampl_tmp = ampl_local;
 
-            /* First real sample: avoid zero envelope when signal just starts */
+            // First real sample: avoid zero envelope when signal just starts
             if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0) {
                 ampl_tmp = 65535;
             }
@@ -1038,7 +1021,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         *phase_diff_out = 0;
     }
 
-    /* Final clamping */
+    // Final clamping
     if (*ampl_out < 0)
         *ampl_out = 0;
     if (*ampl_out > 65535)
@@ -1083,22 +1066,22 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
     if (phase_inc > 0x7FFFFFFFU)
         phase_inc = 0x7FFFFFFFU;
 
-    /* ---- division-free AGC ---- */
+    // division-free AGC
     int32_t data = (int32_t)amp;
     uint32_t abs_amp = (amp < 0 ? (uint32_t)(-amp) : (uint32_t)amp);
 
     if (abs_amp < NO_VOL_THRES) {
-        /* silence ramp-up */
+        // silence ramp-up
         int32_t desired = 1024;
         int32_t ramp_step = ARITH_RSH((desired - ctx->hot.gain_value), 4);
         if (ramp_step > 0)
             ctx->hot.gain_value = SATURATE_ADD((int32_t)ctx->hot.gain_value, ramp_step);
     } else if (amp != 0) {
-        /* logarithmic gain adjustment based on amplitude */
+        // logarithmic gain adjustment based on amplitude
         if (abs_amp > HIGH_VOL_THRES) {
-            ctx->hot.gain_value -= ARITH_RSH(ctx->hot.gain_value, 4); /* fast attack */
+            ctx->hot.gain_value -= ARITH_RSH(ctx->hot.gain_value, 4); // fast attack
         } else {
-            ctx->hot.gain_value += ARITH_RSH((32767 - ctx->hot.gain_value), 5); /* slow release */
+            ctx->hot.gain_value += ARITH_RSH((32767 - ctx->hot.gain_value), 5); // slow release
         }
         if (ctx->hot.gain_value > 32767)
             ctx->hot.gain_value = 32767;
