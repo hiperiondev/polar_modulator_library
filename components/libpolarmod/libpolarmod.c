@@ -66,10 +66,7 @@ static inline int32_t ARITH_RSH(int32_t x, int n) {
     }
 
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-    // Xtensa optimised version – uses sign bit to create correct rounding bias
-    // Equivalent to adding (1<<(n-1)) for positive numbers and subtracting it for negative
-    int32_t sign = x >> 31;                             // 0 or -1
-    int32_t bias = (sign >> (32 - n)) & ((1 << n) - 1); // 0 or (2^n - 1) depending on sign
+    int32_t bias = (-(x >> 31)) & ((1 << (n - 1)) - 1 + 1); // 0 if x>=0, (1<<(n-1)) if x<0
     return (x + bias) >> n;
 #else
     // Portable 32-bit version (ARM, RISC-V, etc.) – no 64-bit arithmetic used
@@ -89,10 +86,9 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
     __asm__("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    // Pure C 32-bit implementation – exact high 32 bits of a*b
-    uint32_t a_lo = a & 0xFFFFU;
+    uint32_t a_lo = a & 0xFFFFu;
     uint32_t a_hi = a >> 16;
-    uint32_t b_lo = b & 0xFFFFU;
+    uint32_t b_lo = b & 0xFFFFu;
     uint32_t b_hi = b >> 16;
 
     uint32_t p00 = a_lo * b_lo;
@@ -100,11 +96,9 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
     uint32_t p10 = a_hi * b_lo;
     uint32_t p11 = a_hi * b_hi;
 
-    // Cross terms that contribute to the high half
-    uint32_t mid = (p00 >> 16) + p01 + p10;
-    uint32_t hi = p11 + (mid >> 16) + ((mid << 16) >> 16);
-
-    return hi;
+    uint32_t low = p00 >> 16;
+    uint32_t mid = p01 + p10 + low;
+    return p11 + (mid >> 16);
 #endif
 }
 
@@ -114,36 +108,17 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    int32_t a_lo = a & 0xFFFF;
-    int32_t a_hi = a >> 16;
-    int32_t b_lo = b & 0xFFFF;
-    int32_t b_hi = b >> 16;
+    uint32_t abs_a = a < 0 ? -a : a;
+    uint32_t abs_b = b < 0 ? -b : b;
+    int32_t sign = (a ^ b) < 0 ? -1 : 1;
 
-    // Sign-extend the parts that are treated as signed
-    if (a_lo & 0x8000)
-        a_lo |= ~0xFFFF;
-    if (a_hi & 0x8000)
-        a_hi |= ~0xFFFF;
-    if (b_lo & 0x8000)
-        b_lo |= ~0xFFFF;
-    if (b_hi & 0x8000)
-        b_hi |= ~0xFFFF;
+    uint32_t hi = umul32_hi(abs_a, abs_b);
+    uint32_t lo = abs_a * abs_b;
 
-    int32_t p00 = a_lo * b_lo;
-    int32_t p01 = a_lo * b_hi;
-    int32_t p10 = a_hi * b_lo;
-    int32_t p11 = a_hi * b_hi;
+    uint32_t result = (hi << 17) | (lo >> 15);
+    result += (lo >> 14) & 1; // Round to nearest
 
-    // Combine cross terms
-    int32_t mid = (p00 >> 16) + p01 + p10;
-
-    // High 32 bits + rounding
-    int32_t hi = p11 + (mid >> 16);
-    // Add 0.5 for proper rounding to nearest
-    if ((mid & 0x8000) && (hi >= 0))
-        hi++;
-
-    return hi;
+    return sign < 0 ? -result : result;
 #endif
 }
 
