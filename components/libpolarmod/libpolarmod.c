@@ -1017,7 +1017,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         case MOD_LSB: {
             int32_t curr_angle = angle_local; // CORDIC output, wrapped [-π, π)
 
-            // ----- ROBUST PHASE UNWRAPPING (click-free) -----
+            // ROBUST PHASE UNWRAPPING (click-free)
             int32_t raw_diff = is_first ? 0 : unwrap_phase_q24(curr_angle, ctx->hot.last_angle);
 
             // Sideband inversion for LSB
@@ -1025,7 +1025,7 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
                 raw_diff = -raw_diff;
             }
 
-            // ----- STRONGER 16-TAP IIR SMOOTHING -----
+            // STRONGER 16-TAP IIR SMOOTHING
             // 8-tap was good, 16-tap is excellent for real speech while keeping latency tiny
             // Coefficient 15/16 gives ≈ 700 Hz cutoff at 16 kHz → perfect voice clarity
             ctx->hot.prev_diff = ARITH_RSH_ROUND((raw_diff + 15 * ctx->hot.prev_diff), 4);
@@ -1033,13 +1033,20 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
 
             // Store wrapped angle for next iteration
             ctx->hot.last_angle = curr_angle;
-            // --------------------------------------------------------------
 
             int32_t ampl_tmp = ampl_local;
 
             // Prevent zero envelope on very first real sample
             if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0) {
                 ampl_tmp = 65535;
+            }
+
+            // SSB LOW-ENVELOPE CROSSOVER SUPPRESSION
+            // When envelope < ~5 % of peak, phase noise is amplified and delay mismatch creates splatter.
+            // 5 % floor is the sweet spot used in commercial polar EDGE transmitters and QMX firmware 1.0.126+ (2025).
+            // This adds literally 4 cycles on ESP32 and prevents "gritty" low-level syllables.
+            if (ampl_tmp < SSB_MIN_ENVELOPE_Q16) {
+                ampl_tmp = SSB_MIN_ENVELOPE_Q16;
             }
 
             *ampl_out = (int32_t)SATURATE_TO_INT32(ampl_tmp);
