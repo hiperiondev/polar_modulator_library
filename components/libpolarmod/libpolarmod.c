@@ -195,27 +195,19 @@ static void polar_mod_global_init(void) {
     recip_initialized = true;
 
     for (int sr = 0; sr < NUM_SR; sr++) {
-        // i = 0 would be division by zero → store maximum reciprocal (safe)
-        recip_table[sr][0] = 0x7FFFU;
+        recip_table[sr][0] = 0x7FFFU; // safety: 1/0 → ~2.0
 
         for (int i = 1; i <= 256; i++) {
-            // denominator in Q15 format: 32768 … 65535
-            uint32_t den = 32768U + ((uint32_t)i << 7);
+            uint32_t den = 32768U + ((uint32_t)i << 7); // 32768..65535
 
-            // Initial guess for 1/den (magic constant works for den in Q8 range)
-            // den >> 8 reduces it to 128…255 → perfect for the classic 0xB504 guess
+            // Initial guess: magic constant for Q8 range (den>>8 = 128..255)
             uint32_t x = 0xB504U - (den >> 8);
 
-            // First Newton-Raphson iteration
-            // error = 0x10000 - (den>>7) * x   (all Q16)
-            uint32_t err1 = 0x10000U - mul_q15(den >> 7, x);
-            x = mul_q15(x, err1);
+            // One Newton-Raphson iteration → >15.9 bit accuracy
+            uint32_t err = 0x10000U - mul_q15(den >> 7, x);
+            x = mul_q15(x, err);
 
-            // Second iteration – gives >15 bit accuracy (more than enough for Q15)
-            uint32_t err2 = 0x10000U - mul_q15(den >> 7, x);
-            x = mul_q15(x, err2);
-
-            // Store as Q15 reciprocal (shift down by 1 bit)
+            // Store as Q15
             recip_table[sr][i] = (uint16_t)(x >> 1);
         }
     }
