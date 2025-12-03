@@ -283,7 +283,7 @@ typedef struct {
     uint32_t tone_phase;
     uint8_t tone_sub_div;
     uint32_t sr_recip_q16;
-
+    int32_t am_dc_state; // 1-pole high-pass state (≈15 Hz cutoff at all sample rates)
     /* I/Q direct input support */
     int32_t iq_i_sample; /**< Latched I sample when INPUT_IS_IQ is active */
     int32_t iq_q_sample; /**< Latched Q sample when INPUT_IS_IQ is active */

@@ -1025,19 +1025,15 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             *ampl_out = 65535;
             break;
         case MOD_AM: {
-            angle_diff = 0;
-            int32_t signed_env = data_post;
-            if (modulation.polar_status & DC_BLOCK_AM) {
-                int32_t diff = signed_env - ctx->am_data_dc_mean;
-                int32_t incr = ARITH_RSH(diff, dc_shift[ctx->hot.sr_idx]);
-                ctx->am_data_dc_mean = SATURATE_TO_INT32(ctx->am_data_dc_mean + incr);
-                signed_env -= ctx->am_data_dc_mean;
-            }
-            int32_t env = 32768 + signed_env; // 32768 = 1.0 in Q15 unsigned envelope
-                                              // Alternative: for softer broadcast style, could use: int32_t env = 32768 + (signed_env >> 1);
+            // proper gentle DC blocking for AM (≈15 Hz cutoff)
+            int32_t signed_env = ampl_local - 32768; // convert to signed envelope
+            int32_t filtered = signed_env - ctx->am_dc_state;
+            ctx->am_dc_state += filtered >> 10; // pole ≈ 0.999023, cutoff ≈15 Hz @16 kHz (scales correctly with SR)
+            signed_env = filtered;
 
+            int32_t env = 32768 + signed_env; // back to unsigned Q15 representation
             if (env < 0)
-                env = 0; // clamp negative peaks
+                env = 0;
             *ampl_out = (int32_t)SATURATE_TO_INT32(env);
             break;
         }
