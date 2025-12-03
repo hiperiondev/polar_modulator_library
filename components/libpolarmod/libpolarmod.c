@@ -77,7 +77,22 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
     __asm__("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    return ((a >> 8) * (b >> 8)) >> 8;
+    // Pure C 32-bit implementation – exact high 32 bits of a*b
+    uint32_t a_lo = a & 0xFFFFU;
+    uint32_t a_hi = a >> 16;
+    uint32_t b_lo = b & 0xFFFFU;
+    uint32_t b_hi = b >> 16;
+
+    uint32_t p00 = a_lo * b_lo;
+    uint32_t p01 = a_lo * b_hi;
+    uint32_t p10 = a_hi * b_lo;
+    uint32_t p11 = a_hi * b_hi;
+
+    // Cross terms that contribute to the high half
+    uint32_t mid = (p00 >> 16) + p01 + p10;
+    uint32_t hi = p11 + (mid >> 16) + ((mid << 16) >> 16);
+
+    return hi;
 #endif
 }
 
@@ -87,13 +102,36 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
     return hi;
 #else
-    int32_t ah = a >> 16, al = a & 0xFFFF;
-    int32_t bh = b >> 16, bl = b & 0xFFFF;
-    int32_t p1 = ah * bh << 1; // Q30 high
-    int32_t p2 = ah * bl;      // Q15 * Q15
-    int32_t p3 = al * bh;      // Q15 * Q15
-    int32_t result = p1 + (p2 >> 15) + (p3 >> 15);
-    return result + 1; // rounding
+    int32_t a_lo = a & 0xFFFF;
+    int32_t a_hi = a >> 16;
+    int32_t b_lo = b & 0xFFFF;
+    int32_t b_hi = b >> 16;
+
+    // Sign-extend the parts that are treated as signed
+    if (a_lo & 0x8000)
+        a_lo |= ~0xFFFF;
+    if (a_hi & 0x8000)
+        a_hi |= ~0xFFFF;
+    if (b_lo & 0x8000)
+        b_lo |= ~0xFFFF;
+    if (b_hi & 0x8000)
+        b_hi |= ~0xFFFF;
+
+    int32_t p00 = a_lo * b_lo;
+    int32_t p01 = a_lo * b_hi;
+    int32_t p10 = a_hi * b_lo;
+    int32_t p11 = a_hi * b_hi;
+
+    // Combine cross terms
+    int32_t mid = (p00 >> 16) + p01 + p10;
+
+    // High 32 bits + rounding
+    int32_t hi = p11 + (mid >> 16);
+    // Add 0.5 for proper rounding to nearest
+    if ((mid & 0x8000) && (hi >= 0))
+        hi++;
+
+    return hi;
 #endif
 }
 
@@ -166,17 +204,34 @@ static inline int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coef
 static void polar_mod_global_init(void) {
     if (recip_initialized)
         return;
+
+    recip_initialized = true;
+
     for (int sr = 0; sr < NUM_SR; sr++) {
-        for (int i = 0; i <= 256; i++) {
-            // Q15 denominator in range 32768 .. 65535
+        // i = 0 would be division by zero → store maximum reciprocal (safe)
+        recip_table[sr][0] = 0x7FFFU;
+
+        for (int i = 1; i <= 256; i++) {
+            // denominator in Q15 format: 32768 … 65535
             uint32_t den = 32768U + ((uint32_t)i << 7);
-            // Q16 reciprocal: 0x00010000 / den fits in 32-bit
-            uint32_t inv = (0x00010000U + (den >> 1)) / den;
-            // store Q15 reciprocal
-            recip_table[sr][i] = (uint16_t)(inv >> 1);
+
+            // Initial guess for 1/den (magic constant works for den in Q8 range)
+            // den >> 8 reduces it to 128…255 → perfect for the classic 0xB504 guess
+            uint32_t x = 0xB504U - (den >> 8);
+
+            // First Newton-Raphson iteration
+            // error = 0x10000 - (den>>7) * x   (all Q16)
+            uint32_t err1 = 0x10000U - mul_q15(den >> 7, x);
+            x = mul_q15(x, err1);
+
+            // Second iteration – gives >15 bit accuracy (more than enough for Q15)
+            uint32_t err2 = 0x10000U - mul_q15(den >> 7, x);
+            x = mul_q15(x, err2);
+
+            // Store as Q15 reciprocal (shift down by 1 bit)
+            recip_table[sr][i] = (uint16_t)(x >> 1);
         }
     }
-    recip_initialized = true;
 }
 
 static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
