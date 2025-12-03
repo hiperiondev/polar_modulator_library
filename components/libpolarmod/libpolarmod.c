@@ -1136,7 +1136,17 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
         update_interval = 128;
     if (update_interval < 2)
         update_interval = 2;
-    update_interval = 1 << (31 - __builtin_clz(update_interval));
+
+    // protect against update_interval == 0 (undefined __builtin_clz)
+    // Also handle the theoretical case of update_interval == 0 after clamping
+    if (update_interval <= 0)
+        update_interval = 1;
+
+    // Convert to next higher power of two (safe even if update_interval == 1)
+    int lz = __builtin_clz((uint32_t)update_interval);
+    // When update_interval == 1, lz == 31 → 31-31 = 0 → 1<<0 = 1 (correct)
+    // When update_interval == 0 was passed, we forced it to 1 → safe
+    update_interval = 1 << (31 - lz);
 
     bool is_const_env = (mod.modulation_mode == MOD_CW || mod.modulation_mode == MOD_FM || mod.modulation_mode == MOD_FMN || mod.modulation_mode == MOD_FMW ||
                          mod.modulation_mode == MOD_USB || mod.modulation_mode == MOD_LSB);
