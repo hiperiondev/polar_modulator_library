@@ -61,14 +61,26 @@ static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
 }
 
 static inline int32_t ARITH_RSH(int32_t x, int n) {
-    if (n <= 0)
-        return x;
-    if (x >= 0)
-        return x >> n;
-    // negative values: convert to positive, shift, restore sign
-    uint32_t ux = (uint32_t)(-x);
-    uint32_t shifted = ux >> n;
-    return -(int32_t)shifted;
+    if (n <= 0) {
+        return x; // No shift requested
+    }
+
+#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
+    // Xtensa optimised version – uses sign bit to create correct rounding bias
+    // Equivalent to adding (1<<(n-1)) for positive numbers and subtracting it for negative
+    int32_t sign = x >> 31;                             // 0 or -1
+    int32_t bias = (sign >> (32 - n)) & ((1 << n) - 1); // 0 or (2^n - 1) depending on sign
+    return (x + bias) >> n;
+#else
+    // Portable 32-bit version (ARM, RISC-V, etc.) – no 64-bit arithmetic used
+    if (x >= 0) {
+        // Positive: round to nearest by adding half the quantum
+        return (x + (1 << (n - 1))) >> n;
+    } else {
+        // Negative: round to nearest by subtracting half the quantum
+        return (x - (1 << (n - 1))) >> n;
+    }
+#endif
 }
 
 static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
