@@ -754,9 +754,10 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     ctx->low_vol_thres = ctx->high_vol_thres >> 1;
     ctx->no_vol_thres = NO_VOL_THRES;
 
-    ctx->fm_dev_scales[0] = 132;
-    ctx->fm_dev_scales[1] = 264;
-    ctx->fm_dev_scales[2] = 3960;
+    // Modified: Load FM deviation scales from per-SR table
+    ctx->fm_dev_scales[0] = fm_phase_scale_factor[sr_idx][0];
+    ctx->fm_dev_scales[1] = fm_phase_scale_factor[sr_idx][1];
+    ctx->fm_dev_scales[2] = fm_phase_scale_factor[sr_idx][2];
 
     ctx->hot.last_angle = 0;
     ctx->hot.prev_diff = 0;
@@ -950,13 +951,14 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
         case MOD_FMN:
         case MOD_FM:
         case MOD_FMW: {
+            // Use per-sample-rate FM deviation scales from context
             int32_t scale;
             if (mode == MOD_FMN)
-                scale = fm_phase_scale_factor[0];
+                scale = ctx->fm_dev_scales[0];
             else if (mode == MOD_FM)
-                scale = fm_phase_scale_factor[1];
+                scale = ctx->fm_dev_scales[1];
             else
-                scale = fm_phase_scale_factor[2];
+                scale = ctx->fm_dev_scales[2];
 
             angle_diff = data_post * scale;
 

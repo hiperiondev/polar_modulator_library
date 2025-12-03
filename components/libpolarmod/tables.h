@@ -189,11 +189,12 @@ static const uint32_t freq_to_phase_q32[NUM_SR] = {
 };
 static const uint8_t dc_shift[3] = { 5, 4, 2 }; /* 8 kHz, 16 kHz, 48 kHz */
 static const uint16_t sr_sqrt_scale[3] = { 724, 512, 295 };
-FLASH_CONST static const int32_t fm_phase_scale_factor[3] = {
-    //
-    132, /* MOD_FMN – matches original test expectation */
-    264, /* MOD_FM  – matches original test expectation */
-    3960 /* MOD_FMW – matches original test expectation */
+// FM deviation scaling per sample rate [sr_idx][mode]
+// 0=FMN(2.5kHz), 1=FM(5kHz), 2=FMW(75kHz)
+FLASH_CONST static const int32_t fm_phase_scale_factor[3][3] = {
+    { 66, 132, 1980 },  // 8 kHz
+    { 132, 264, 3960 }, // 16 kHz
+    { 396, 792, 11880 } // 48 kHz
 };
 
 #endif /* TABLES_H_ */
