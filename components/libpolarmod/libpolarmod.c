@@ -267,7 +267,6 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         // saturate counter at 100
         if (ctx->cnt_high_volume_peaks < 100)
             ctx->cnt_high_volume_peaks++;
-        // apply attack only after 3 consecutive peaks (keep original test expectation)
         if (ctx->cnt_high_volume_peaks > 3) {
             uint8_t shift = agc_attack_shift[ctx->hot.sr_idx];
             ctx->hot.gain_value -= ctx->hot.gain_value >> shift;
@@ -743,7 +742,6 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
         int32_t old_scale = sr_sqrt_scale[ctx->hot.sr_idx];
         int32_t new_scale = sr_sqrt_scale[sr_idx];
         for (int i = 0; i < N_TAPS; i++) {
-            // Only use 32bit integer arithmetic
             ctx->hilbert_delay_line[i] = (ctx->hilbert_delay_line[i] * new_scale) / old_scale;
         }
     }
@@ -785,7 +783,6 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     ctx->low_vol_thres = ctx->high_vol_thres >> 1;
     ctx->no_vol_thres = NO_VOL_THRES;
 
-    // Modified: Load FM deviation scales from per-SR table
     ctx->fm_dev_scales[0] = fm_phase_scale_factor[sr_idx][0];
     ctx->fm_dev_scales[1] = fm_phase_scale_factor[sr_idx][1];
     ctx->fm_dev_scales[2] = fm_phase_scale_factor[sr_idx][2];
@@ -1001,16 +998,19 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             *ampl_out = 65535;
             break;
         case MOD_AM: {
-            // proper gentle DC blocking for AM (≈15 Hz cutoff)
-            int32_t signed_env = ampl_local - 32768; // convert to signed envelope
-            int32_t filtered = signed_env - ctx->am_dc_state;
-            ctx->am_dc_state += filtered >> 10; // pole ≈ 0.999023, cutoff ≈15 Hz @16 kHz (scales correctly with SR)
-            signed_env = filtered;
+            // FULL-CARRIER AM (no 180° phase flips)
+            // Use the Hilbert transformer exactly like SSB but add a DC offset
+            // to the I path → creates a real carrier. The envelope never crosses zero.
+            hilbert(ctx, data_post, &i_local, &q_local);
 
-            int32_t env = 32768 + signed_env; // back to unsigned Q15 representation
-            if (env < 0)
-                env = 0;
-            *ampl_out = (int32_t)SATURATE_TO_INT32(env);
+            // Add DC carrier. Value 32768 << 12 = +32768 in Q15 domain → ~50 % resting carrier.
+            i_local += (int32_t)32768 << 12; // fixed DC carrier injection
+
+            cordic(i_local, q_local, &ampl_local, &angle_local);
+
+            // Amplitude is already correct – no artificial bias
+            *ampl_out = SATURATE_TO_INT32(ampl_local);
+            *phase_diff_out = 0;
             break;
         }
         case MOD_USB:
