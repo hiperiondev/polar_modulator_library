@@ -44,7 +44,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static int32_t current_sr_index = 1;
-static const int32_t hilbert_comp_q24[NUM_SR] = { 1000, 0, -1000 }; // Precomputed compensation for group delay mismatch at different SR
 static uint16_t recip_table[NUM_SR][257];
 static bool recip_initialized = false;
 
@@ -1022,11 +1021,6 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
 
             // ----- ROBUST PHASE UNWRAPPING (click-free) -----
             int32_t raw_diff = is_first ? 0 : unwrap_phase_q24(curr_angle, ctx->hot.last_angle);
-
-            // Sample-rate dependent Hilbert group delay compensation
-            if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
-                raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
-            }
 
             // Sideband inversion for LSB
             if (mode == MOD_LSB) {
