@@ -175,11 +175,11 @@ static const biquad_coeff_t hp_200_4pol_s2[NUM_SR] = {
 
 FLASH_CONST static const uint16_t agc_period_tab[3] = { 1000, 2000, 5333 };
 static const uint16_t sr_recip_q16[3] = {
-    //
-    65536U / 8000U,  /* 8  kHz -> 8    */
-    65536U / 16000U, /* 16 kHz -> 4    */
-    65536U / 48000U  /* 48 kHz -> 1    */
+    8U, // 8000  Hz → 65536 / 8000  = 8.192  → 8
+    4U, // 16000 Hz → 65536 / 16000 = 4.096  → 4
+    1U  // 48000 Hz → 65536 / 48000 ≈ 1.365 → 1
 };
+static const uint8_t freq_offset_shift[3] = { 3, 2, 0 }; // 8kHz, 16kHz, 48kHz
 
 static const uint8_t hilbert_taps_per_sr[NUM_SR] = { 8, 16, 15 }; /* SR-specific Hilbert tap count 8kHz:8, 16kHz:16, 48kHz:15(decimated) */
 static const uint32_t freq_to_phase_q32[NUM_SR] = {

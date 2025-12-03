@@ -179,16 +179,6 @@ static void polar_mod_global_init(void) {
     recip_initialized = true;
 }
 
-static inline int32_t wrap_phase_diff_q24(int32_t diff) {
-    // Fast ±π wrap for Q24 phase (1 << 24 == 2π)
-    if (diff > (1 << 23)) {
-        diff -= (1 << 24);
-    } else if (diff <= -(1 << 23)) {
-        diff += (1 << 24);
-    }
-    return diff;
-}
-
 static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
     int32_t diff = curr - prev;
     const int32_t half = 1 << 23; // π in Q24
@@ -995,42 +985,42 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             break;
         }
         case MOD_USB:
-        case MOD_LSB: 		{
-		            int32_t curr_angle = angle_local;      // CORDIC output, wrapped [-π, π)
+        case MOD_LSB: {
+            int32_t curr_angle = angle_local; // CORDIC output, wrapped [-π, π)
 
-		            // ----- ROBUST PHASE UNWRAPPING (click-free) -----
-		            int32_t raw_diff = is_first ? 0 : unwrap_phase_q24(curr_angle, ctx->hot.last_angle);
+            // ----- ROBUST PHASE UNWRAPPING (click-free) -----
+            int32_t raw_diff = is_first ? 0 : unwrap_phase_q24(curr_angle, ctx->hot.last_angle);
 
-		            // Sample-rate dependent Hilbert group delay compensation
-		            if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
-		                raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
-		            }
+            // Sample-rate dependent Hilbert group delay compensation
+            if (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) {
+                raw_diff -= hilbert_comp_q24[ctx->hot.sr_idx];
+            }
 
-		            // Sideband inversion for LSB
-		            if (mode == MOD_LSB) {
-		                raw_diff = -raw_diff;
-		            }
+            // Sideband inversion for LSB
+            if (mode == MOD_LSB) {
+                raw_diff = -raw_diff;
+            }
 
-		            // ----- STRONGER 16-TAP IIR SMOOTHING -----
-		            // 8-tap was good, 16-tap is excellent for real speech while keeping latency tiny
-		            // Coefficient 15/16 gives ≈ 700 Hz cutoff at 16 kHz → perfect voice clarity
-		            ctx->hot.prev_diff = ARITH_RSH_ROUND((raw_diff + 15 * ctx->hot.prev_diff), 4);
-		            angle_diff = ctx->hot.prev_diff;
+            // ----- STRONGER 16-TAP IIR SMOOTHING -----
+            // 8-tap was good, 16-tap is excellent for real speech while keeping latency tiny
+            // Coefficient 15/16 gives ≈ 700 Hz cutoff at 16 kHz → perfect voice clarity
+            ctx->hot.prev_diff = ARITH_RSH_ROUND((raw_diff + 15 * ctx->hot.prev_diff), 4);
+            angle_diff = ctx->hot.prev_diff;
 
-		            // Store wrapped angle for next iteration
-		            ctx->hot.last_angle = curr_angle;
-		            // --------------------------------------------------------------
+            // Store wrapped angle for next iteration
+            ctx->hot.last_angle = curr_angle;
+            // --------------------------------------------------------------
 
-		            int32_t ampl_tmp = ampl_local;
+            int32_t ampl_tmp = ampl_local;
 
-		            // Prevent zero envelope on very first real sample
-		            if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0) {
-		                ampl_tmp = 65535;
-		            }
+            // Prevent zero envelope on very first real sample
+            if (is_first && modulation.special_modulation == SPECIAL_MODULATION_NORMAL && ampl_tmp == 0) {
+                ampl_tmp = 65535;
+            }
 
-		            *ampl_out = (int32_t)SATURATE_TO_INT32(ampl_tmp);
-		            break;
-		        }
+            *ampl_out = (int32_t)SATURATE_TO_INT32(ampl_tmp);
+            break;
+        }
     }
 
     *phase_diff_out = angle_diff;
@@ -1128,6 +1118,9 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
     int32_t mean_corr = 0;
     const int32_t dc_alpha = 3;
 
+    // Get current shift amount for frequency offset calculation
+    uint8_t shift_amount = (ctx->hot.sr_idx >= 0 && ctx->hot.sr_idx < NUM_SR) ? freq_offset_shift[ctx->hot.sr_idx] : 2;
+
     for (int32_t i = 0; i < samples; ++i) {
         int32_t ampl_out, phase_diff_out;
         polar_modulator(ctx, mod, data, &ampl_out, &phase_diff_out);
@@ -1154,8 +1147,9 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
         ampl_buf[i] = (int16_t)corr32;
 
         if (update_interval == 1) {
+            // frequency offset using precomputed shift per sample rate
             int32_t clipped = SATURATE_TO_INT16(phase_diff_out >> 9);
-            int32_t freq_offset = (clipped * (int32_t)ctx->sr_recip_q16) >> 16;
+            int32_t freq_offset = clipped >> shift_amount; // equivalent to (clipped * sr_recip_q16[sr]) >> 16
             int32_t offset_clamped = freq_offset;
             if (offset_clamped < 0 && (uint32_t)(-offset_clamped) > base_freq_hz)
                 new_freq = 0;
@@ -1169,7 +1163,7 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
                 accum_phase_diff = 0;
                 count = 0;
                 int32_t clipped = SATURATE_TO_INT16(avg_phase_diff >> 9);
-                int32_t freq_offset = (clipped * (int32_t)ctx->sr_recip_q16) >> 16;
+                int32_t freq_offset = clipped >> shift_amount;
                 int32_t offset_clamped = freq_offset;
                 if (offset_clamped < 0 && (uint32_t)(-offset_clamped) > base_freq_hz)
                     new_freq = 0;
