@@ -196,5 +196,6 @@ FLASH_CONST static const int32_t fm_phase_scale_factor[3][3] = {
     { 132, 264, 3960 }, // 16 kHz
     { 396, 792, 11880 } // 48 kHz
 };
+FLASH_CONST static const uint8_t agc_attack_shift[NUM_SR] = { 5, 4, 4 }; // 8 kHz, 16 kHz, 48 kHz
 
 #endif /* TABLES_H_ */

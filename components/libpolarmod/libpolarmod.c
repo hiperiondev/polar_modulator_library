@@ -269,10 +269,8 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             ctx->cnt_high_volume_peaks++;
         // apply attack only after 3 consecutive peaks (keep original test expectation)
         if (ctx->cnt_high_volume_peaks > 3) {
-            int attack_shift = 4;
-            if (ctx->hot.sr_idx == 0)
-                attack_shift = 5; // 8 kHz slower attack
-            ctx->hot.gain_value -= ctx->hot.gain_value >> attack_shift;
+            uint8_t shift = agc_attack_shift[ctx->hot.sr_idx];
+            ctx->hot.gain_value -= ctx->hot.gain_value >> shift;
             if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
                 ctx->hot.gain_value = (int32_t)ctx->agc_min;
             ctx->cnt_high_volume_peaks = 0; // reset after attack
