@@ -59,6 +59,7 @@
 #include <stdint.h>
 
 #include "macros.h"
+#include "tables.h"
 
 /* ============================================================================================= */
 /* Version information                                                                           */
@@ -580,5 +581,7 @@ void cordic(int32_t x, int32_t y, int32_t *out_abs, int32_t *out_angle);
  * @param[out]    y     Pointer to receive Q sample
  */
 void iq_signal_generator(polar_mod_ctx_t *ctx, int32_t mode, int32_t *x, int32_t *y);
+
+int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coeff_t *c);
 
 #endif /* LIBPOLARMOD_H_ */

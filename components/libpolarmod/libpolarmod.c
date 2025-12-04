@@ -48,7 +48,7 @@ static uint16_t recip_table[NUM_SR][257];
 static bool recip_initialized = false;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
+inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
     if (n <= 0)
         return x;
     if (x >= 0) {
@@ -59,7 +59,7 @@ static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
     }
 }
 
-static inline int32_t ARITH_RSH(int32_t x, int n) {
+inline int32_t ARITH_RSH(int32_t x, int n) {
     if (n <= 0) {
         return x; // No shift requested
     }
@@ -140,7 +140,7 @@ static inline int32_t mul_q8(int32_t a, int32_t b) {
 #endif
 }
 
-static inline int32_t saturate_add(int32_t a, int32_t b) {
+inline int32_t saturate_add(int32_t a, int32_t b) {
     if (b > 0 && a > INT32_MAX - b)
         return INT32_MAX;
     if (b < 0 && a < INT32_MIN - b)
@@ -160,31 +160,6 @@ static inline int32_t round_shift_q15(int32_t x) {
     uint32_t u = (x ^ s) - s; // abs
     u = (u + 0x4000U) >> 15;
     return (u ^ s) - s; // restore sign
-}
-
-static inline int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coeff_t *c) {
-    int32_t w1 = delay[0];
-    int32_t w2 = delay[1];
-    if (x == 0 && w1 == 0 && w2 == 0)
-        return 0;
-
-    w1 = SATURATE_TO_INT32(CLIP16(w1));
-    w2 = SATURATE_TO_INT32(CLIP16(w2));
-
-    int32_t a1w1 = ARITH_RSH((c->a1 * w1), 14);
-    int32_t a2w2 = ARITH_RSH((c->a2 * w2), 14);
-    int32_t temp = SATURATE_ADD(x, SATURATE_ADD(a1w1, a2w2));
-    temp = SATURATE_TO_INT32(CLIP16(temp));
-
-    int32_t b0w = ARITH_RSH((c->b0 * temp), 14);
-    int32_t b1w1 = ARITH_RSH((c->b1 * w1), 14);
-    int32_t b2w2 = ARITH_RSH((c->b2 * w2), 14);
-    int32_t y = SATURATE_ADD(b0w, SATURATE_ADD(b1w1, b2w2));
-
-    delay[1] = (int)w1;
-    delay[0] = (int)temp;
-
-    return (int)SATURATE_TO_INT32(y);
 }
 
 static void polar_mod_global_init(void) {
@@ -223,6 +198,31 @@ static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+HOTFUNC int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coeff_t *c) {
+    int32_t w1 = delay[0];
+    int32_t w2 = delay[1];
+    if (x == 0 && w1 == 0 && w2 == 0)
+        return 0;
+
+    w1 = SATURATE_TO_INT32(CLIP16(w1));
+    w2 = SATURATE_TO_INT32(CLIP16(w2));
+
+    int32_t a1w1 = ARITH_RSH((c->a1 * w1), 14);
+    int32_t a2w2 = ARITH_RSH((c->a2 * w2), 14);
+    int32_t temp = SATURATE_ADD(x, SATURATE_ADD(a1w1, a2w2));
+    temp = SATURATE_TO_INT32(CLIP16(temp));
+
+    int32_t b0w = ARITH_RSH((c->b0 * temp), 14);
+    int32_t b1w1 = ARITH_RSH((c->b1 * w1), 14);
+    int32_t b2w2 = ARITH_RSH((c->b2 * w2), 14);
+    int32_t y = SATURATE_ADD(b0w, SATURATE_ADD(b1w1, b2w2));
+
+    delay[1] = (int)w1;
+    delay[0] = (int)temp;
+
+    return (int)SATURATE_TO_INT32(y);
+}
 
 HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) {
     if (!ctx)

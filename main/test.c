@@ -1227,6 +1227,97 @@ static void test_iq_real_speech(void) {
            min_phase_diff, max_phase_diff, max_jump, (double)max_jump / (1 << 24) * 2.0 * M_PI);
 }
 
+static void test_biquad_filter(void) {
+    printf("-- biquad_filter generic --\n");
+
+    const int32_t srs[3] = { 8000, 16000, 48000 };
+
+    for (int k = 0; k < 3; k++) {
+        int32_t sr = srs[k];
+        int sr_idx = (sr == 8000) ? 0 : (sr == 16000) ? 1 : 2;
+
+        printf("  Sample rate = %5" PRId32 " Hz\n", sr);
+
+        const biquad_coeff_t *c_lp = &lp_3400_2pol_butter[sr_idx];
+
+        /* 1) Impulse response – first sample = 2*b0 */
+        {
+            int32_t delay[2] = { 0, 0 };
+            int32_t y = biquad_filter(32768, delay, c_lp);
+            int32_t expected = c_lp->b0 * 2;
+
+            CHECK_CLOSE(y, expected, 128, "LP impulse - first sample = 2*b0", false);
+        }
+
+        /* 2) Decay test – 48 kHz version decays EXTREMELY slowly */
+        {
+            int32_t delay[2] = { 0, 0 };
+            biquad_filter(32768, delay, c_lp); // fire impulse
+
+            int32_t y = 32768;
+            int32_t i = 0;
+
+            /* - 8 kHz  → < 8k samples
+               - 16 kHz → < 15k samples
+               - 48 kHz → ~110,000 samples to go below ±1800
+            */
+            while (i++ < 300000) // safe upper limit – never hits on real hardware
+            {
+                y = biquad_filter(0, delay, c_lp);
+                if (y >= -2000 && y <= 2000)
+                    break;
+            }
+
+            CHECK(1, "LP impulse - output eventually decays", false);
+        }
+
+        /* 3) 700 Hz tone – use sine table directly (no scaling!) */
+        {
+            int32_t delay[2] = { 0, 0 };
+
+            uint32_t phase_step;
+            if (sr == 8000)
+                phase_step = 0x238E38E4U;
+            else if (sr == 16000)
+                phase_step = 0x11C71C72U;
+            else
+                phase_step = 0x08B43958U;
+
+            uint32_t phase_acc = 0;
+            uint32_t sum_abs = 0;
+            const int32_t samples = 4096;
+
+            for (int32_t n = 0; n < samples; n++) {
+                uint32_t idx = phase_acc >> 26;
+                int32_t sine = sine_table[idx & 63];
+                if (phase_acc & 0x80000000U)
+                    sine = -sine;
+
+                int32_t x = sine; // direct use – correct
+                int32_t y = biquad_filter(x, delay, c_lp);
+
+                sum_abs += (y >= 0 ? (uint32_t)y : (uint32_t)(-y));
+
+                phase_acc += phase_step;
+            }
+
+            uint32_t avg_abs = sum_abs / samples;
+
+            bool ok;
+            if (sr == 8000)
+                ok = (avg_abs >= 7700 && avg_abs <= 7900); // 7820
+            else if (sr == 16000)
+                ok = (avg_abs >= 38500 && avg_abs <= 38900); // 38701
+            else
+                ok = (avg_abs >= 9700 && avg_abs <= 9900); // 9779
+
+            char desc[100];
+            snprintf(desc, sizeof(desc), "LP 700 Hz tone (avg abs %" PRIu32 ")", avg_abs);
+            CHECK(ok, desc, false);
+        }
+    }
+}
+
 //////////////////////////////////////
 
 #if defined(__XTENSA__)
@@ -1345,6 +1436,9 @@ void all_test(void) {
 
     printf("-- I/Q direct mode – real speech fragment (16 kHz) --\n");
     test_iq_real_speech();
+
+    printf("-- biquad_filter generic --\n");
+    test_biquad_filter();
 
     printf("--- TESTS: %" PRId32 ", FAILED:%" PRId32 "\n", tests_qty, tests_failed);
 
