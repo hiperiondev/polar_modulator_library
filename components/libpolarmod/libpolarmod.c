@@ -35,7 +35,7 @@
 #include "macros.h"
 #include "tables.h"
 
-#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
+#if defined(__XTENSA__)
 #define HOTFUNC IRAM_ATTR
 #else
 #define HOTFUNC
@@ -48,6 +48,22 @@ static uint16_t recip_table[NUM_SR][257];
 static bool recip_initialized = false;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static inline int32_t saturate_add(int32_t a, int32_t b) {
+    if (b > 0 && a > INT32_MAX - b)
+        return INT32_MAX;
+    if (b < 0 && a < INT32_MIN - b)
+        return INT32_MIN;
+    return a + b;
+}
+
+static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
+    int32_t shifted = b >> shift;
+    if (shifted == 0)
+        return a;
+    return SATURATE_ADD(a, shifted);
+}
+
 inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
     if (n <= 0)
         return x;
@@ -138,21 +154,6 @@ static inline int32_t mul_q8(int32_t a, int32_t b) {
         res32 = ~res32 + 1;
     return (int32_t)res32;
 #endif
-}
-
-inline int32_t saturate_add(int32_t a, int32_t b) {
-    if (b > 0 && a > INT32_MAX - b)
-        return INT32_MAX;
-    if (b < 0 && a < INT32_MIN - b)
-        return INT32_MIN;
-    return a + b;
-}
-
-static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
-    int32_t shifted = b >> shift;
-    if (shifted == 0)
-        return a;
-    return SATURATE_ADD(a, shifted);
 }
 
 static inline int32_t round_shift_q15(int32_t x) {
