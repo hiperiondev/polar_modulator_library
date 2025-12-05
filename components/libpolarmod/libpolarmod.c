@@ -202,26 +202,26 @@ static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
 HOTFUNC int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coeff_t *c) {
     int32_t w1 = delay[0];
     int32_t w2 = delay[1];
-    if (x == 0 && w1 == 0 && w2 == 0)
-        return 0;
 
-    w1 = SATURATE_TO_INT32(CLIP16(w1));
-    w2 = SATURATE_TO_INT32(CLIP16(w2));
+    // clip delay elements to 16-bit before multiply
+    w1 = CLIP16(w1);
+    w2 = CLIP16(w2);
 
-    int32_t a1w1 = ARITH_RSH((c->a1 * w1), 14);
-    int32_t a2w2 = ARITH_RSH((c->a2 * w2), 14);
-    int32_t temp = SATURATE_ADD(x, SATURATE_ADD(a1w1, a2w2));
-    temp = SATURATE_TO_INT32(CLIP16(temp));
+    // Feedback part: x + (-a1)*w1 + (-a2)*w2 → since table stores -a1, -a2 → just add
+    int32_t feedback = ARITH_RSH(c->a1 * w1, 14) + ARITH_RSH(c->a2 * w2, 14);
+    int32_t temp = x + feedback;
 
-    int32_t b0w = ARITH_RSH((c->b0 * temp), 14);
-    int32_t b1w1 = ARITH_RSH((c->b1 * w1), 14);
-    int32_t b2w2 = ARITH_RSH((c->b2 * w2), 14);
-    int32_t y = SATURATE_ADD(b0w, SATURATE_ADD(b1w1, b2w2));
+    // Clip intermediate temp to 16-bit (original code did this)
+    temp = CLIP16(temp);
 
-    delay[1] = (int)w1;
-    delay[0] = (int)temp;
+    // Feed-forward part
+    int32_t y = ARITH_RSH(c->b0 * temp, 14) + ARITH_RSH(c->b1 * w1, 14) + ARITH_RSH(c->b2 * w2, 14);
 
-    return (int)SATURATE_TO_INT32(y);
+    // Update delay line
+    delay[1] = w1;
+    delay[0] = temp;
+
+    return y;
 }
 
 HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_status) {

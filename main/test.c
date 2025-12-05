@@ -1228,8 +1228,6 @@ static void test_iq_real_speech(void) {
 }
 
 static void test_biquad_filter(void) {
-    printf("-- biquad_filter generic --\n");
-
     const int32_t srs[3] = { 8000, 16000, 48000 };
 
     for (int k = 0; k < 3; k++) {
