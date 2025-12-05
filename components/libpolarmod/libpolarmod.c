@@ -228,7 +228,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
     if (!ctx)
         return 256;
 
-    // SR change : reconfigure thresholds and AGC state
+    // Reconfigure on sample-rate change
     if (ctx->hot.sample_rate <= 0 || ctx->last_sample_rate != ctx->hot.sample_rate) {
         polar_mod_set_sr(ctx, ctx->hot.sample_rate);
         ctx->last_sample_rate = ctx->hot.sample_rate;
@@ -237,7 +237,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         ctx->cnt_no_volume_event = 0;
     }
 
-    // PTT not active : clamp gain and reset counters
+    // PTT inactive: clamp gain and reset counters
     if (!(polar_status & PTT_ACTIVE)) {
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
             ctx->hot.gain_value = (int32_t)ctx->agc_min;
@@ -249,9 +249,16 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         return ctx->hot.gain_value;
     }
 
-    // Time-based gating
+    // Time-based gating: scale period so that 48 kHz reacts faster
+    // Base period 400 samples @ 16 kHz → scale proportional to SR
+    int32_t period = 400;
+    if (ctx->hot.sample_rate == SAMPLE_RATE_8KHZ)
+        period = 200;
+    else if (ctx->hot.sample_rate == SAMPLE_RATE_48KHZ)
+        period = 1200; // ~25 ms instead of 5333 samples
     ctx->hot.n++;
-    if (ctx->hot.n < ctx->agc_period) {
+    if (ctx->hot.n < period) {
+        // Ensure gain stays within signed bounds
         if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
             ctx->hot.gain_value = (int32_t)ctx->agc_min;
         if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
@@ -262,9 +269,8 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
 
     int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
 
-    // High-volume detection with hysteresis
+    // High-volume attack
     if (abs_ampl > ctx->high_vol_thres) {
-        // saturate counter at 100
         if (ctx->cnt_high_volume_peaks < 100)
             ctx->cnt_high_volume_peaks++;
         if (ctx->cnt_high_volume_peaks > 3) {
@@ -272,10 +278,9 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
             ctx->hot.gain_value -= ctx->hot.gain_value >> shift;
             if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
                 ctx->hot.gain_value = (int32_t)ctx->agc_min;
-            ctx->cnt_high_volume_peaks = 0; // reset after attack
+            ctx->cnt_high_volume_peaks = 0;
         }
     } else {
-        // decay counter by 1 only, keeps hysteresis
         if (ctx->cnt_high_volume_peaks > 0)
             ctx->cnt_high_volume_peaks--;
     }
@@ -285,9 +290,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         if (ctx->cnt_low_volume_event < 1000)
             ctx->cnt_low_volume_event++;
         if (ctx->cnt_low_volume_event > 20) {
-            int shift = 5;
-            if (ctx->hot.sr_idx == 2)
-                shift = 4; // 48 kHz faster release
+            int shift = (ctx->hot.sr_idx == 2) ? 4 : 5; // faster at 48 kHz
             int32_t delta = ARITH_RSH(((int32_t)ctx->agc_max - ctx->hot.gain_value), shift);
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
@@ -303,9 +306,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         if (ctx->cnt_no_volume_event < 100)
             ctx->cnt_no_volume_event++;
         if (ctx->cnt_no_volume_event > 5) {
-            int shift = 4;
-            if (ctx->hot.sr_idx == 2)
-                shift = 3; // 48 kHz faster
+            int shift = (ctx->hot.sr_idx == 2) ? 3 : 4;
             int32_t delta = ARITH_RSH(((int32_t)ctx->agc_max - ctx->hot.gain_value), shift);
             ctx->hot.gain_value += delta;
             if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
@@ -316,7 +317,7 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
         ctx->cnt_no_volume_event = 0;
     }
 
-    // Final clamps
+    // Final signed clamps
     if (ctx->hot.gain_value < (int32_t)ctx->agc_min)
         ctx->hot.gain_value = (int32_t)ctx->agc_min;
     if (ctx->hot.gain_value > (int32_t)ctx->agc_max)
