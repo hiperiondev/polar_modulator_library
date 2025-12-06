@@ -64,32 +64,24 @@ static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
     return SATURATE_ADD(a, shifted);
 }
 
-inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
+static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
     if (n <= 0)
         return x;
-    if (x >= 0) {
-        return (x + (1 << (n - 1))) >> n; // positive: round to nearest
-    } else {
-        // negative: add bias before shift to round toward zero (same as original code intent)
-        return (x - (1 << (n - 1))) >> n;
-    }
+    int32_t bias = (x >> 31) & ((1 << (n - 1)) - 1); // 0 for positive, (1<<(n-1))-1 for negative
+    return (x + bias + (1 << (n - 1))) >> n;
 }
 
-inline int32_t ARITH_RSH(int32_t x, int n) {
-    if (n <= 0) {
-        return x; // No shift requested
-    }
-
+// Standard arithmetic right shift (truncate toward zero for negative)
+static inline int32_t ARITH_RSH(int32_t x, int n) {
+    if (n <= 0)
+        return x;
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-    int32_t bias = (-(x >> 31)) & ((1 << (n - 1)) - 1 + 1); // 0 if x>=0, (1<<(n-1)) if x<0
+    int32_t bias = (x >> 31) & ((1 << (n - 1)) - 1);
     return (x + bias) >> n;
 #else
-    // Portable 32-bit version (ARM, RISC-V, etc.) – no 64-bit arithmetic used
     if (x >= 0) {
-        // Positive: round to nearest by adding half the quantum
         return (x + (1 << (n - 1))) >> n;
     } else {
-        // Negative: round to nearest by subtracting half the quantum
         return (x - (1 << (n - 1))) >> n;
     }
 #endif
@@ -119,21 +111,33 @@ static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {
 
 static inline int32_t mul_q15(int32_t a, int32_t b) {
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-    int32_t hi;
-    __asm__ volatile("mulsh %0, %1, %2" : "=r"(hi) : "r"(a), "r"(b));
-    return hi;
+    int32_t result;
+    // mulsh gives upper 32 bits of 32×32 → 64 product
+    __asm__ volatile("mulsh %0, %1, %2" : "=r"(result) : "r"(a), "r"(b));
+    return result;
 #else
-    uint32_t abs_a = a < 0 ? -a : a;
-    uint32_t abs_b = b < 0 ? -b : b;
-    int32_t sign = (a ^ b) < 0 ? -1 : 1;
+    // Portable version: use absolute values and manual decomposition
+    int32_t abs_a = (a < 0) ? -a : a;
+    int32_t abs_b = (b < 0) ? -b : b;
+    int32_t sign = ((a ^ b) >> 31) | 1; // -1 if signs differ
 
-    uint32_t hi = umul32_hi(abs_a, abs_b);
-    uint32_t lo = abs_a * abs_b;
+    uint32_t a_lo = (uint32_t)abs_a & 0xFFFFU;
+    uint32_t a_hi = (uint32_t)abs_a >> 16;
+    uint32_t b_lo = (uint32_t)abs_b & 0xFFFFU;
+    uint32_t b_hi = (uint32_t)abs_b >> 16;
 
-    uint32_t result = (hi << 17) | (lo >> 15);
-    result += (lo >> 14) & 1; // Round to nearest
+    uint32_t p00 = a_lo * b_lo;
+    uint32_t p01 = a_lo * b_hi;
+    uint32_t p10 = a_hi * b_lo;
+    uint32_t p11 = a_hi * b_hi;
 
-    return sign < 0 ? -result : result;
+    uint32_t mid = p01 + p10 + (p00 >> 16);
+    uint32_t hi = p11 + (mid >> 16);
+
+    // Reconstruct Q15 result in upper 16 bits
+    int32_t result = (int32_t)(hi << 16) | (mid >> 16);
+    result = SATURATE_TO_INT32(result);
+    return (sign < 0) ? -result : result;
 #endif
 }
 
@@ -143,16 +147,19 @@ static inline int32_t mul_q8(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(result) : "r"(a), "r"(b));
     return result;
 #else
-    uint32_t ua = (uint32_t)a;
-    uint32_t ub = (uint32_t)b;
-    uint32_t lo = ua * ub;
-    uint32_t hi = umul32_hi(ua, ub);
-    uint32_t res32 = (hi << 24) | (lo >> 8);
-    if (lo & 0x80U)
-        res32++;
-    if ((a ^ b) < 0)
-        res32 = ~res32 + 1;
-    return (int32_t)res32;
+    int32_t abs_a = (a < 0) ? -a : a;
+    int32_t abs_b = (b < 0) ? -b : b;
+    int32_t sign = ((a ^ b) >> 31) | 1;
+
+    uint32_t prod_lo = (uint32_t)abs_a * (uint32_t)abs_b;
+    uint32_t prod_hi = umul32_hi((uint32_t)abs_a, (uint32_t)abs_b);
+
+    uint32_t result = (prod_hi << 24) | (prod_lo >> 8);
+    if (prod_lo & 0x80U)
+        result++;
+
+    result = SATURATE_TO_INT32((int32_t)result);
+    return (sign < 0) ? -result : result;
 #endif
 }
 
@@ -195,6 +202,9 @@ static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
         diff -= (1 << 24); // subtract 2π
     if (diff < -half)
         diff += (1 << 24); // add 2π
+
+    diff = SATURATE_TO_INT32(diff);
+
     return diff;
 }
 
@@ -815,6 +825,7 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     ctx->agc_step = 3 + sr_idx;
     ctx->agc_max = 32768;
     ctx->agc_min = 64;
+    ctx->am_dc_state = 0;
 
     static const uint32_t tone_step_recip[NUM_SR] = { 0x00020000U, 0x00010000U, 0x00005555U };
     ctx->tone_step = ((tone_step_recip[sr_idx] * 1000U) >> 0);

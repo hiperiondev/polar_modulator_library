@@ -1,8 +1,28 @@
 /*
- * macros.h
+ * Copyright 2025 Emiliano Gonzalez (egonzalez . hiperion @ gmail . com))
+ * * Project Site: https://github.com/hiperiondev/polar_modulator_library *
  *
- *  Created on: 23 nov 2025
- *      Author: egonzalez
+ * The MIT License (MIT)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
  */
 
 #ifndef MACROS_H_
@@ -10,16 +30,13 @@
 
 #if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
 #include "esp_dsp.h"
-// #define FLASH_CONST __attribute__((section(".irom.text")))
-// #define FLASH_RODATA __attribute__((section(".rodata.sine")))
+#define FLASH_CONST static const
 #else
-// #define FLASH_CONST
-// #define FLASH_RODATA
+#define FLASH_CONST static const
 #endif
+
 #define SATURATE_ADD(x, y) saturate_add(x, y)
 #define CLIP16(x)          ((x) < -32768 ? -32768 : ((x) > 32767 ? 32767 : (x)))
-#define FLASH_CONST
-#define FLASH_RODATA
 
 #define STEP_8K  1
 #define STEP_16K 2
