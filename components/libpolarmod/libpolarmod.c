@@ -67,24 +67,30 @@ static inline int32_t safe_shift_add(int32_t a, int32_t b, int shift) {
 static inline int32_t ARITH_RSH_ROUND(int32_t x, int n) {
     if (n <= 0)
         return x;
-    int32_t bias = (x >> 31) & ((1 << (n - 1)) - 1); // 0 for positive, (1<<(n-1))-1 for negative
-    return (x + bias + (1 << (n - 1))) >> n;
+    int32_t sign = x >> 31;
+    int32_t adj = (1 << (n - 1));
+    int32_t adjusted;
+    if (sign == 0) {
+        adjusted = x + adj;
+    } else {
+        adjusted = x - adj;
+    }
+    uint32_t uadj = (uint32_t)adjusted;
+    uadj >>= n;
+    if (adjusted < 0) {
+        uadj |= ~((1U << (32 - n)) - 1U);
+    }
+    return (int32_t)uadj;
 }
 
-// Standard arithmetic right shift (truncate toward zero for negative)
 static inline int32_t ARITH_RSH(int32_t x, int n) {
     if (n <= 0)
         return x;
-#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-    int32_t bias = (x >> 31) & ((1 << (n - 1)) - 1);
-    return (x + bias) >> n;
-#else
-    if (x >= 0) {
-        return (x + (1 << (n - 1))) >> n;
-    } else {
-        return (x - (1 << (n - 1))) >> n;
-    }
-#endif
+    uint32_t ux = (uint32_t)x;
+    if (x < 0)
+        ux = ~ux + 1; // Abs for shift
+    ux >>= n;
+    return (x < 0) ? -(int32_t)ux : (int32_t)ux; // Toward zero
 }
 
 static inline uint32_t umul32_hi(uint32_t a, uint32_t b) {

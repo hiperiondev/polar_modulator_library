@@ -222,6 +222,7 @@ typedef struct {
     int32_t counter;     /**< General-purpose counter */
     int32_t sample_rate; /**< Current sample rate in Hz */
     int32_t energy_q16;  /**< Short-term energy estimate (Q16) */
+    int32_t am_dc_state; // DC blocking state for AM mode (1-pole IIR HPF)
 } hot_cacheline_t __attribute__((aligned(32)));
 
 /**
