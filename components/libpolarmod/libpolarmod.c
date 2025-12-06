@@ -214,23 +214,31 @@ HOTFUNC int32_t biquad_filter(int32_t x, int32_t *delay, const biquad_coeff_t *c
     int32_t w1 = delay[0];
     int32_t w2 = delay[1];
 
-    // clip delay elements to 16-bit before multiply
+    // Prevent overflow in multiplications – coefficients are Q15, delays must stay in 16-bit range
     w1 = CLIP16(w1);
     w2 = CLIP16(w2);
 
-    // Feedback part: x + (-a1)*w1 + (-a2)*w2 → since table stores -a1, -a2 → just add
-    int32_t feedback = ARITH_RSH(c->a1 * w1, 14) + ARITH_RSH(c->a2 * w2, 14);
-    int32_t temp = x + feedback;
+    // Feedback calculation using stored -a1 and -a2 → we add directly
+    int32_t fb1 = ARITH_RSH(c->a1 * w1, 14);
+    int32_t fb2 = ARITH_RSH(c->a2 * w2, 14);
+    int32_t feedback = SATURATE_ADD(fb1, fb2);
 
-    // Clip intermediate temp to 16-bit (original code did this)
+    // w[n] = x[n] + feedback
+    int32_t temp = SATURATE_ADD(x, feedback);
+
+    // Critical safety: clip intermediate result before feed-forward multiplies
     temp = CLIP16(temp);
 
     // Feed-forward part
-    int32_t y = ARITH_RSH(c->b0 * temp, 14) + ARITH_RSH(c->b1 * w1, 14) + ARITH_RSH(c->b2 * w2, 14);
+    int32_t ff0 = ARITH_RSH(c->b0 * temp, 14);
+    int32_t ff1 = ARITH_RSH(c->b1 * w1, 14);
+    int32_t ff2 = ARITH_RSH(c->b2 * w2, 14);
+
+    int32_t y = SATURATE_ADD(ff0, SATURATE_ADD(ff1, ff2));
 
     // Update delay line
     delay[1] = w1;
-    delay[0] = temp;
+    delay[0] = temp; // already clipped
 
     return y;
 }
@@ -351,22 +359,31 @@ int32_t filter_2pol_lowpass_3000hz_bessel(int32_t x, int32_t *restrict delay) {
     return biquad_filter(x, delay, c);
 }
 
-int32_t filter_4pol_lowpass_3000hz_bessel(int32_t x, int32_t *restrict delay) {
-    int sr = current_sr_index;
-    int32_t y = biquad_filter(x, delay, &lp_3000_4pol_bessel_s2[sr]);
-    return biquad_filter(y, delay + 2, &lp_3000_4pol_bessel_s1[sr]);
+int32_t filter_4pol_lowpass_3000hz_bessel(int32_t x, int32_t *delay) {
+    const biquad_coeff_t *c1 = &lp_3000_4pol_bessel_s1[current_sr_index];
+    const biquad_coeff_t *c2 = &lp_3000_4pol_bessel_s2[current_sr_index];
+
+    int32_t mid = biquad_filter(x, delay, c1);
+    mid = CLIP16(mid);
+    return biquad_filter(mid, delay + 2, c2);
 }
 
-int32_t filter_4pol_lowpass_3000hz(int32_t x, int32_t *restrict delay) {
-    int sr = current_sr_index;
-    int32_t y = biquad_filter(x, delay, &lp_3000_4pol_butter_s2[sr]);
-    return biquad_filter(y, delay + 2, &lp_3000_4pol_butter_s1[sr]);
+int32_t filter_4pol_lowpass_3000hz(int32_t x, int32_t *delay) {
+    const biquad_coeff_t *c1 = &lp_3000_4pol_butter_s1[current_sr_index];
+    const biquad_coeff_t *c2 = &lp_3000_4pol_butter_s2[current_sr_index];
+
+    int32_t mid = biquad_filter(x, delay, c1);
+    mid = CLIP16(mid);
+    return biquad_filter(mid, delay + 2, c2);
 }
 
-int32_t filter_4pol_lowpass_3400hz(int32_t x, int32_t *restrict delay) {
-    int sr = current_sr_index;
-    int32_t y = biquad_filter(x, delay, &lp_3400_4pol_butter_s2[sr]);
-    return biquad_filter(y, delay + 2, &lp_3400_4pol_butter_s1[sr]);
+int32_t filter_4pol_lowpass_3400hz(int32_t x, int32_t *delay) {
+    const biquad_coeff_t *c1 = &lp_3400_4pol_butter_s1[current_sr_index];
+    const biquad_coeff_t *c2 = &lp_3400_4pol_butter_s2[current_sr_index];
+
+    int32_t mid = biquad_filter(x, delay, c1);
+    mid = CLIP16(mid); // essential for stability
+    return biquad_filter(mid, delay + 2, c2);
 }
 
 int32_t filter_2pol_lowpass_3400hz(int32_t x, int32_t *restrict delay) {
