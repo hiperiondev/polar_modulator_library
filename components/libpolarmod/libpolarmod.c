@@ -1062,11 +1062,17 @@ int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t d
             // Add DC carrier. Value 32768 << 12 = +32768 in Q15 domain → ~50 % resting carrier.
             i_local += (int32_t)32768 << 12; // fixed DC carrier injection
 
+            if (modulation.polar_status & DC_BLOCK_AM) {
+                ctx->am_dc_state = (ctx->am_dc_state * 32767 + ampl_local) >> 15;
+                ampl_local -= ctx->am_dc_state >> 4;
+            }
+
             cordic(i_local, q_local, &ampl_local, &angle_local);
 
             // Amplitude is already correct – no artificial bias
             *ampl_out = SATURATE_TO_INT32(ampl_local);
             *phase_diff_out = 0;
+
             break;
         }
         case MOD_USB:
@@ -1206,7 +1212,7 @@ HOTFUNC uint32_t dss_mod(polar_mod_ctx_t *ctx, modulation_t mod, uint32_t base_f
     bool is_const_env = (mod.modulation_mode == MOD_CW || mod.modulation_mode == MOD_FM || mod.modulation_mode == MOD_FMN || mod.modulation_mode == MOD_FMW ||
                          mod.modulation_mode == MOD_USB || mod.modulation_mode == MOD_LSB);
 
-    bool apply_dc_block = !is_const_env && (mod.modulation_mode != MOD_AM);
+    bool apply_dc_block = !is_const_env && (mod.modulation_mode != MOD_AM || (mod.polar_status & DC_BLOCK_AM));
     agc_type_t old_agc_type = mod.agc_type;
 
     int32_t accum_phase_diff = 0;
