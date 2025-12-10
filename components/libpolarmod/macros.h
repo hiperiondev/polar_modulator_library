@@ -53,6 +53,7 @@
 
 #define SATURATE_TO_INT32(x) ((x) > INT32_MAX ? INT32_MAX : ((x) < INT32_MIN ? INT32_MIN : (x)))
 #define SATURATE_TO_INT16(x) ((x) > INT16_MAX ? INT16_MAX : ((x) < INT16_MIN ? INT16_MIN : (x)))
+#define SATURATE_COUNTER(val, max) ((val) >= (max) ? (max) : (val) + 1)
 
 #define HILBERT_DELAY     13
 #define CORDIC_ITERATIONS 16

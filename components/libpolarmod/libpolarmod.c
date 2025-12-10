@@ -260,6 +260,14 @@ HOTFUNC int32_t mic_agc_fast(polar_mod_ctx_t *ctx, int32_t ampl, uint32_t polar_
 
     int32_t abs_ampl = (ampl < 0 ? -ampl : ampl);
 
+    if (abs_ampl > HIGH_VOL_THRES) {
+        ctx->cnt_high_volume_peaks = SATURATE_COUNTER(ctx->cnt_high_volume_peaks, 100);
+    } else if (abs_ampl < NO_VOL_THRES) {
+        ctx->cnt_no_volume_event = SATURATE_COUNTER(ctx->cnt_no_volume_event, 100);
+    } else if (abs_ampl < LOW_VOL_THRES) {
+        ctx->cnt_low_volume_event = SATURATE_COUNTER(ctx->cnt_low_volume_event, 100);
+    }
+
     // High-volume attack
     if (abs_ampl > ctx->high_vol_thres) {
         if (ctx->cnt_high_volume_peaks < 100)
