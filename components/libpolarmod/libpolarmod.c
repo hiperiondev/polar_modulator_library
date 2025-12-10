@@ -44,8 +44,6 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static int32_t current_sr_index = 1;
-static uint16_t recip_table[NUM_SR][257];
-static bool recip_initialized = false;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -122,28 +120,21 @@ static inline int32_t mul_q15(int32_t a, int32_t b) {
     __asm__ volatile("mulsh %0, %1, %2" : "=r"(result) : "r"(a), "r"(b));
     return result;
 #else
-    // Portable version: use absolute values and manual decomposition
-    int32_t abs_a = (a < 0) ? -a : a;
-    int32_t abs_b = (b < 0) ? -b : b;
-    int32_t sign = ((a ^ b) >> 31) | 1; // -1 if signs differ
+    // Safe 32-bit only implementation using half-word decomposition
+    int32_t a_hi = a >> 16;
+    int32_t a_lo = (a & 0xFFFF);
+    int32_t b_hi = b >> 16;
+    int32_t b_lo = (b & 0xFFFF);
 
-    uint32_t a_lo = (uint32_t)abs_a & 0xFFFFU;
-    uint32_t a_hi = (uint32_t)abs_a >> 16;
-    uint32_t b_lo = (uint32_t)abs_b & 0xFFFFU;
-    uint32_t b_hi = (uint32_t)abs_b >> 16;
+    // Compute Q15 result: (a * b) >> 15
+    // Break into partial products to avoid overflow
+    int32_t p0 = (a_lo * b_lo) >> 15;
+    int32_t p1 = (a_lo * b_hi);
+    int32_t p2 = (a_hi * b_lo);
+    int32_t p3 = (a_hi * b_hi) << 1;
 
-    uint32_t p00 = a_lo * b_lo;
-    uint32_t p01 = a_lo * b_hi;
-    uint32_t p10 = a_hi * b_lo;
-    uint32_t p11 = a_hi * b_hi;
-
-    uint32_t mid = p01 + p10 + (p00 >> 16);
-    uint32_t hi = p11 + (mid >> 16);
-
-    // Reconstruct Q15 result in upper 16 bits
-    int32_t result = (int32_t)(hi << 16) | (mid >> 16);
-    result = SATURATE_TO_INT32(result);
-    return (sign < 0) ? -result : result;
+    int32_t result = p0 + p1 + p2 + p3;
+    return SATURATE_TO_INT32(result);
 #endif
 }
 
@@ -174,31 +165,6 @@ static inline int32_t round_shift_q15(int32_t x) {
     uint32_t u = (x ^ s) - s; // abs
     u = (u + 0x4000U) >> 15;
     return (u ^ s) - s; // restore sign
-}
-
-static void polar_mod_global_init(void) {
-    if (recip_initialized)
-        return;
-
-    recip_initialized = true;
-
-    for (int sr = 0; sr < NUM_SR; sr++) {
-        recip_table[sr][0] = 0x7FFFU; // safety: 1/0 → ~2.0
-
-        for (int i = 1; i <= 256; i++) {
-            uint32_t den = 32768U + ((uint32_t)i << 7); // 32768..65535
-
-            // Initial guess: magic constant for Q8 range (den>>8 = 128..255)
-            uint32_t x = 0xB504U - (den >> 8);
-
-            // One Newton-Raphson iteration → >15.9 bit accuracy
-            uint32_t err = 0x10000U - mul_q15(den >> 7, x);
-            x = mul_q15(x, err);
-
-            // Store as Q15
-            recip_table[sr][i] = (uint16_t)(x >> 1);
-        }
-    }
 }
 
 static inline int32_t unwrap_phase_q24(int32_t curr, int32_t prev) {
@@ -759,7 +725,6 @@ inline int32_t soft_limiter(int32_t x) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void polar_mod_init(polar_mod_ctx_t *ctx) {
-    polar_mod_global_init();      // one-time init of recip_table
     memset(ctx, 0, sizeof(*ctx)); // batch-zero entire context
     ctx->hot.gain_value = 1000;
     ctx->hot.sample_rate = SAMPLE_RATE_16KHZ;
