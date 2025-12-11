@@ -28,11 +28,13 @@
 #ifndef MACROS_H_
 #define MACROS_H_
 
-#if defined(__XTENSA__) && defined(CONFIG_IDF_TARGET_ESP32)
-#include "esp_dsp.h"
+#if defined(__XTENSA__)
+#include "esp_attr.h"
 #define FLASH_CONST static const
+#define HOTFUNC IRAM_ATTR
 #else
 #define FLASH_CONST static const
+#define HOTFUNC
 #endif
 
 #define SATURATE_ADD(x, y) saturate_add(x, y)

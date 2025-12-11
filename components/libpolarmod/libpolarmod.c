@@ -35,12 +35,6 @@
 #include "macros.h"
 #include "tables.h"
 
-#if defined(__XTENSA__)
-#define HOTFUNC IRAM_ATTR
-#else
-#define HOTFUNC
-#endif
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static int32_t current_sr_index = 1;
@@ -830,6 +824,7 @@ void polar_mod_set_sr(polar_mod_ctx_t *ctx, int32_t sr) {
     ctx->tone_phase = 0;
     ctx->tone_sub_div = 1;
     ctx->sr_recip_q16 = sr_recip_q16[sr_idx];
+	hilbert_reset(ctx);	
 }
 
 int32_t polar_modulator(polar_mod_ctx_t *ctx, modulation_t modulation, int32_t data, int32_t *ampl_out, int32_t *phase_diff_out) {
